@@ -1,0 +1,8 @@
+setup.py
+stVGP/__init__.py
+stVGP/stVGP.py
+stVGP.egg-info/PKG-INFO
+stVGP.egg-info/SOURCES.txt
+stVGP.egg-info/dependency_links.txt
+stVGP.egg-info/requires.txt
+stVGP.egg-info/top_level.txt

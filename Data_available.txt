@@ -1,0 +1,5 @@
+All data used in this work are publicly available through online sources: 
+human dorsolateral prefrontal cortex dataset profiled by Visium platform (http://spatial.libd.org/spatialLIBD/); 
+mouse whole brain dataset profiled by ST platform (GSE147747); 
+human embryonic heart dataset profiled by 10x Genomics Chromium platform (https://data.mendeley.com/datasets/mbvhhf8m62/2); 
+mouse olfactory bulb dataset and human breast cancer dataset profiled by ST platform (https://www.spatialresearch.org/resources-published-datasets/doi-10-1126science-aaf2403/). 

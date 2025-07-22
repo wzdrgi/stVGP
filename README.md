@@ -1,5 +1,6 @@
 # stVGP
 A variational spatiotemporal Gaussian process framework designed to integrate multi-modal, multi-slice spatial transcriptomics (ST) data for coherent 3D tissue reconstruction.
+![221fa3c12c6c04e7e626c3953304cbe3.jpg](https://s2.loli.net/2025/07/22/Y36aTcKHVmROlrW.jpg)
 
 # Installation
 The stVGP package is developed based on the Python libraries Scanpy, PyTorch and PyG (PyTorch Geometric) framework, and can be run on GPU (recommend) or CPU. Before installing stVGP, please ensure that Scanpy, PyTorch, and PyG (PyTorch Geometric) are already installed. These dependencies are required for stVGP to function properly, but they are not automatically installed during the installation process to allow greater flexibility.

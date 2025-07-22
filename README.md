@@ -1,5 +1,7 @@
 # stVGP
 A variational spatiotemporal Gaussian process framework designed to integrate multi-modal, multi-slice spatial transcriptomics (ST) data for coherent 3D tissue reconstruction.
+
+
 ![221fa3c12c6c04e7e626c3953304cbe3.jpg](https://s2.loli.net/2025/07/22/Y36aTcKHVmROlrW.jpg)
 
 # Installation

@@ -12,6 +12,7 @@ The stVGP package is developed based on the Python libraries Scanpy, PyTorch and
 The use of the mclust algorithm requires the rpy2 package (Python) and the mclust package (R). See https://pypi.org/project/rpy2/ and https://cran.r-project.org/web/packages/mclust/index.html for detail.
 
 ## Computing environment
+Python environment：  
 Python==3.8.19  
 anndata==0.12.6  
 numpy==1.24.3  
@@ -25,11 +26,12 @@ torch_geometric==2.7.0
 torchvision==0.14.1  
 tqdm==4.65.0  
 
-R==4.2.3
-Seurat==4.3.0
-sp==1.6-0
-spdep==1.3-3
-progress==1.2.2
+R environment：  
+R==4.2.3  
+Seurat==4.3.0  
+sp==1.6-0  
+spdep==1.3-3  
+progress==1.2.2  
 
 ## Tutorials
 Five step-by-step tutorials are included in the Tutorial folder

@@ -33,6 +33,9 @@ sp==1.6-0
 spdep==1.3-3  
 progress==1.2.2  
 
+## Quick-start tutorial
+Here, we provide guidance on using the stVGP sample data to help you quickly get started with our method. Here we provide two datasets for testing: the human dorsolateral prefrontal cortex (DLPFC) dataset (can be download at https://figshare.com/authors/Zedong_Wang/20593784) and the human developing heart dataset (can be download at https://figshare.com/authors/Zedong_Wang/20593784).
+
 ## Tutorials
 Five step-by-step tutorials are included in the Tutorial folder
 

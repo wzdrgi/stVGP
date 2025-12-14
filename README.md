@@ -21,9 +21,9 @@ Pillow==12.0.0
 scanpy==1.11.5  
 scikit_learn==1.3.0  
 scipy==1.10.1  
-torch==1.13.1  
+torch==1.13.1+cu117  
 torch_geometric==2.7.0  
-torchvision==0.14.1  
+torchvision==0.14.1+cu117  
 tqdm==4.65.0  
 
 R environment：  

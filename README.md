@@ -33,6 +33,9 @@ sp==1.6-0
 spdep==1.3-3  
 progress==1.2.2  
 
+## Gene selection
+Due to the strong version dependency of the R module in stVGP during gene selection, users encountering version-related issues preventing code execution may directly reference our results for subsequent alignment analysis. Alignment results are available for download at https://figshare.com/authors/Zedong_Wang/20593784 website.
+
 ## Quick-start tutorial
 Here, we provide guidance on using the stVGP sample data to help you quickly get started with our method. Here we provide two datasets for testing: the human dorsolateral prefrontal cortex (DLPFC) dataset (can be download at https://figshare.com/authors/Zedong_Wang/20593784) and the human developing heart dataset (can be download at https://figshare.com/authors/Zedong_Wang/20593784).
 
@@ -405,4 +408,8 @@ The raw data files can be located by referring to Data_available.txt, which prov
 ## Computing Environment
 You can refer to requires.txt and R_requires.txt for environment configuration.
 
-
+## Documentation
+1. Rigid Alignment and STN Alignment: The function “gene_rigid_alignment” performs rigid alignment on all slices. It requires input of multi-slice information, selected gene information, and the alignment mode. The function “STN_rigid_alignment” performs non-rigid alignment on all slices and integrates rigid alignment. This mode must be run after multi-slice rigid alignment. It requires input of multi-slice information, selected gene information, and the alignment mode.  
+2. Domain and batch correction:The function “train_stVGP” requires input of merged slice gene expression data, spatial information, and selection of modes such as whether to eliminate batch effects or perform cross-modal fusion. Additionally, different selection modes yield distinct return details that must be examined within the code (https://github.com/wzdrgi/stVGP/blob/main/stVGP.py).  
+3. Gene prediction:The functions “get_3D_prediction” and “gene_prediction” predict the latent layer information and final gene expression of virtual slices, respectively. get_3D_prediction requires input of trained latent layer information and virtual spatial coordinates, while gene_prediction requires input of predicted latent layer information and initial slice expression information. They return the latent layer and gene expression of virtual slices, respectively.  
+  

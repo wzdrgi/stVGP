@@ -400,16 +400,25 @@ Done!
 For more data analysis and details, please refer to the stVGP tutorial (https://github.com/wzdrgi/stVGP/tree/main/Tutorial).
 
 ## Tutorials
-Five step-by-step tutorials are included in the Tutorial folder (https://github.com/wzdrgi/stVGP/tree/main/Tutorial).
+For all datasets step-by-step tutorials are included in the Tutorial folder (https://github.com/wzdrgi/stVGP/tree/main/Tutorial). The tutorial folder contains all modules and reproduces some results and images from the stVGP paper.
 
 ## Data and Preprocessing Workflow
 The raw data files can be located by referring to Data_available.txt, which provides a list of all available datasets and their paths. All data files used in the tutorials can be generated directly through the provided code.
 
 ## Computing Environment
-You can refer to requires.txt and R_requires.txt for environment configuration.
+Can refer to requires.txt and R_requires.txt for environment configuration. We conducted all data analysis on the Win10.
 
 ## Documentation
-1. Rigid Alignment and STN Alignment: The function “gene_rigid_alignment” performs rigid alignment on all slices. It requires input of multi-slice information, selected gene information, and the alignment mode. The function “STN_rigid_alignment” performs non-rigid alignment on all slices and integrates rigid alignment. This mode must be run after multi-slice rigid alignment. It requires input of multi-slice information, selected gene information, and the alignment mode.  
-2. Domain and batch correction:The function “train_stVGP” requires input of merged slice gene expression data, spatial information, and selection of modes such as whether to eliminate batch effects or perform cross-modal fusion. Additionally, different selection modes yield distinct return details that must be examined within the code (https://github.com/wzdrgi/stVGP/blob/main/stVGP.py).  
-3. Gene prediction:The functions “get_3D_prediction” and “gene_prediction” predict the latent layer information and final gene expression of virtual slices, respectively. get_3D_prediction requires input of trained latent layer information and virtual spatial coordinates, while gene_prediction requires input of predicted latent layer information and initial slice expression information. They return the latent layer and gene expression of virtual slices, respectively.  
+1. Rigid Alignment and STN Alignment: The function "gene_rigid_alignment" performs rigid alignment on all slices. It requires input of multi-slice information, selected gene information, and the alignment mode. The function "STN_rigid_alignment" performs non-rigid alignment on all slices and integrates rigid alignment. This mode must be run after multi-slice rigid alignment. It requires input of multi-slice information, selected gene information, and the alignment mode.  
+Parameter "stadata_input": A list of multi-slice spatial transcriptomes arranged in sequential order.  
+Parameter "gene_input": Selected list of spatial genes.  
+Parameter "ini_spatial","add_spatial": The original spatial coordinate keywords stored in the .obsm within the adata (anndata) and the new keywords storing the aligned coordinates after alignment slicing.  
+Parameter "align_model": The selected alignment model will either align all slices with a single slice or sequentially align all slices.  
+Parameter "gene_input_list": When "align_model" is set to "sequential_alignment", "gene_input_list" is required: a two-dimensional list containing the gene selection results for each slice.  
+Parameter "ref_label": When aligning all slices with a template slice, the index of the diaphragm slice.  
+Parameter "align_method": Choosing between the ICP algorithm and the optimization algorithm.
+Parameter "icp_iterations","maxiter": Maximum iteration count for ICP algorithm or optimization algorithm.  
+
+3. Domain and batch correction:The function “train_stVGP” requires input of merged slice gene expression data, spatial information, and selection of modes such as whether to eliminate batch effects or perform cross-modal fusion. Additionally, different selection modes yield distinct return details that must be examined within the code (https://github.com/wzdrgi/stVGP/blob/main/stVGP.py).  
+4. Gene prediction:The functions “get_3D_prediction” and “gene_prediction” predict the latent layer information and final gene expression of virtual slices, respectively. get_3D_prediction requires input of trained latent layer information and virtual spatial coordinates, while gene_prediction requires input of predicted latent layer information and initial slice expression information. They return the latent layer and gene expression of virtual slices, respectively.  
   

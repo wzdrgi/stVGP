@@ -410,7 +410,8 @@ Can refer to requires.txt and R_requires.txt for environment configuration. We c
 
 ## Documentation
 1. Rigid Alignment and STN Alignment: The function "gene_rigid_alignment" performs rigid alignment on all slices. It requires input of multi-slice information, selected gene information, and the alignment mode. The function "STN_rigid_alignment" performs non-rigid alignment on all slices and integrates rigid alignment. This mode must be run after multi-slice rigid alignment. It requires input of multi-slice information, selected gene information, and the alignment mode.  
-```Key Parameter:  
+```
+    Key Parameter:  
     Parameter "stadata_input": A list of multi-slice spatial transcriptomes arranged in sequential order.  
     Parameter "gene_input": Selected list of spatial genes.  
     Parameter "ini_spatial","add_spatial": The original spatial coordinate keywords stored in the .obsm within the adata (anndata) and the new keywords storing the aligned coordinates after alignment slicing.  
@@ -422,9 +423,22 @@ Can refer to requires.txt and R_requires.txt for environment configuration. We c
 ```
 2. Domain and batch correction:The function “train_stVGP” requires input of merged slice gene expression data, spatial information, and selection of modes such as whether to eliminate batch effects or perform cross-modal fusion. Additionally, different selection modes yield distinct return details that must be examined within the code (https://github.com/wzdrgi/stVGP/blob/main/stVGP.py).
 ```
-
+    Key Parameter:  
+    Parameter "ST_need_reconstruction_matrix":
+    Parameter "all_spatial_net":
+    Parameter "use_batch":
+    Parameter "batch_key":
+    Parameter "adata_infor":
+    Parameter "use_image":
+    Parameter "adata_infor_image":
+    Parameter "GP_set":
+    Parameter "GP_spatial_infor":
 ```
 3. Gene prediction:The functions “get_3D_prediction” and “gene_prediction” predict the latent layer information and final gene expression of virtual slices, respectively. get_3D_prediction requires input of trained latent layer information and virtual spatial coordinates, while gene_prediction requires input of predicted latent layer information and initial slice expression information. They return the latent layer and gene expression of virtual slices, respectively.  
 ```
-
+    Key Parameter:
+    Parameter "":
+    Parameter "":
+    Parameter "":
+    Parameter "":
 ```

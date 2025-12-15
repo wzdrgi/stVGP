@@ -83,7 +83,8 @@ Only need to modify the input and output paths to complete the analysis of spati
 
 Please note that the results selected here are highly version-dependent. 
 Therefore, if you encounter execution issues at this step due to version incompatibility, 
-you can proceed directly with data analysis by referencing our execution results (recommended). 
+you can proceed directly with data analysis by referencing our execution results (recommended).
+(can be download at https://figshare.com/authors/Zedong_Wang/20593784).
 Alternatively, you may review our R execution environment and make necessary adjustments. 
 At this step, you will obtain a new file in the path you specified, with the default name gene_morans_9.txt.
 ```

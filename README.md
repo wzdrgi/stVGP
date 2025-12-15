@@ -433,12 +433,28 @@ Can refer to requires.txt and R_requires.txt for environment configuration. We c
     Parameter "adata_infor_image": Storage of image information, representing a list of all slice adata. When "use_image" is set to True, "adata_infor_image" cannot be set to `None`.
     Parameter "GP_set": Switch for enabling Gaussian processes in hidden layers. 
     Parameter "GP_spatial_infor": After enabling the Gaussian process, all spatial coordinates of points required by the Gaussian process must be provided. When GP_set is set to True, GP_spatial_infor cannot be empty.
+    Parameter "lr": stVGP learning rate, default value 0.001.
+    Parameter "weight_decay": Weight decay (L2 penalty) coefficient, default value 1e-4.
+    Parameter "training_epoch": The number of training iterations for stVGP, defaulting to 1500.
+    Parameter "num_heads": stVGP learning rate, default value 0.001.
+    Parameter "device": stVGP learning rate, default value 0.001.
+    Parameter "save_model": stVGP learning rate, default value 0.001.
+    Parameter "save_model_path": stVGP learning rate, default value 0.001.
+    Parameter "hidden_embedding": stVGP learning rate, default value 0.001.
+    Parameter "random_seed": stVGP learning rate, default value 0.001.
+    Parameter "optimize_method": stVGP learning rate, default value 0.001.
+    Parameter "whether_gradient_clipping": stVGP learning rate, default value 0.001.
+    Parameter "gradient_clipping": stVGP learning rate, default value 0.001.
+    Parameter "all_gat": stVGP learning rate, default value 0.001.  
 ```
 3. Gene prediction:The functions “get_3D_prediction” and “gene_prediction” predict the latent layer information and final gene expression of virtual slices, respectively. get_3D_prediction requires input of trained latent layer information and virtual spatial coordinates, while gene_prediction requires input of predicted latent layer information and initial slice expression information. They return the latent layer and gene expression of virtual slices, respectively.  
 ```
     Key Parameter:
-    Parameter "":
-    Parameter "":
-    Parameter "":
-    Parameter "":
+    Parameter "train_coordinates": Spatial coordinates of the hidden layer used for training. 
+    Parameter "embedding": Hidden layer information for training. The rows in embedding and train_coordinates should correspond to each other. The number of spots used for training.
+    Parameter "spatial_pred": Spatial coordinate points requiring stVGP for prediction. 
+    Parameter "noise": Whether to introduce white noise. 
+    noise_value "noise": Noise level.
+    constant_value "noise": Constant washout for Gaussian processes.
+    Rbf_value "noise": Smoothness of Gaussian processes.   
 ```

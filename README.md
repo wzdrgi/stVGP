@@ -36,7 +36,10 @@ progress==1.2.2
 ## Quick-start tutorial
 Here, we provide guidance on using the stVGP sample data to help you quickly get started with our method. Here we provide two datasets for testing: the human dorsolateral prefrontal cortex (DLPFC) dataset (can be download at https://figshare.com/authors/Zedong_Wang/20593784) and the human developing heart dataset (can be download at https://figshare.com/authors/Zedong_Wang/20593784).
 
-## DLPFC dataset  
+Here, we first demonstrate the stVGP domain identification and gene expression prediction workflow on the DLPFC dataset. Subsequently, we demonstrate the stVGP batch-clearing workflow on the human cardiac dataset. Since only batch-clearing needs to be shown for the cardiac dataset, we skip the slice alignment process. Note that if users skip the alignment process, they should manually set `use_batch` to True in the `train_stVGP` function. All datasets can be download at https://figshare.com/authors/Zedong_Wang/20593784.
+
+DLPFC
+
 import packages
 ```python
 import stVGP as stvg
@@ -46,7 +49,7 @@ import torch
 import warnings
 warnings.filterwarnings("ignore")
 ```
-# Read data
+Read data
 ```python
 # Read data
 # This dataset can be downloaded directly from Figshare (https://figshare.com/authors/Zedong_Wang/20593784). 
@@ -57,11 +60,11 @@ for slice_id in slices_use:
     adata_i = sc.read("C:/Users/wzd/Desktop/setting/project/DLPFC/{}.h5ad".format(slice_id))
     adata_list_raw.append(adata_i)
 ```
-# Data Preprocessing
+Data preprocessing
 ```python
 adata_list = stvg.st_preprocess(adata_list_raw,min_cells = 100)
 ```
-
+Spatially specific gene selection
 ```python
 # Analysing spatial regionality genes
 # Analysed with the help of R
@@ -72,7 +75,6 @@ adata_st_list = stvg.select_gene(adata_list,
 # Next, the genes will be analyzed using seurat and the spatial morans analysis will be performed on the filtered genes. 
 # The details of the analysis are in gene_select.R
 ```
-
 ```python
 After the previous code step completes, a file named "select_gene_9".txt will appear under the "savepath" specified in the select_gene function. 
 In this step, we need to input this file into the stVGP R module for further analysis. 
@@ -98,21 +100,21 @@ sorted_indices = np.argsort(gene_morans_result[:,-1])[::-1]
 top_morans_indices = sorted_indices[:10]
 select_gene_final = gene_morans_result[top_morans_indices,0]
 ```
-
+Align multiple slices
 ```python
 # Alignment using spatial information
 # Gene expression parallel alignment
 adata_st_list = stvg.gene_rigid_mapping_alignment(gene_input = select_gene_final,stadata_input = adata_st_list,align_model = "single_template_alignment",)
 adata_st_list = stvg.STN_rigid_alignment(stadata_input = adata_st_list, select_gene_final = select_gene_final)
 ```
-
+Save data
 ```python
 # Save the result after alignment
 # for adata in adata_st_list:
 #     silce_id = str(int(adata.obs['slice_id'][0]))
 #     adata.write("C:/Users/wzd/Desktop/setting/project/DLPFC/{}_slice.h5ad".format(silce_id))
 ```
-
+Domain and batch effect
 ```python
 # Domain and batch effect
 # Re-enter data
@@ -125,30 +127,281 @@ for slice_name in slice_idx:
     adata = adata[~adata.obs['layer'].isna()]
     adata_DLPFC_list.append(adata)
 ```
-
+Processing relationships
 ```python
 # Processing relationships between data for the stVGP model
-# 
+# Here, the selection of align_model must be consistent with the choice made in the gene_rigid_mapping_alignment function.
 slice_matrix,adj_matrix = stvg.adata_preprocess_adjnet(input_adata = adata_DLPFC_list,align_model = 'single_template_alignment')
 ```
+Run stVGP
 ```python
+# Model training
+recon_x, embedding, model_params,logvar = stvg.train_stVGP(
+        ST_need_reconstruction_matrix = slice_matrix,
+        all_spatial_net = adj_matrix,
+        lr = 0.001,
+        weight_decay = 0.0001,
+        training_epoch = 1200,
+        num_heads = 1,
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+        save_model = False,
+        save_model_path = 'path',
+        hidden_embedding = [512,24],
+        random_seed = 112,
+        optimize_method = 'adam',
+        whether_gradient_clipping = False,
+        gradient_clipping = 5.0,
+        all_gat = True)
 ```
+Save data
 ```python
+# Save embedded layer data
+# np.savetxt('C:/Users/wzd/Desktop/setting/project/DLPFC/embedding.txt',embedding,fmt='%s')
 ```
+Cluster and compare
 ```python
+# Domain result
+from mclustpy import mclustpy
+from sklearn.metrics import adjusted_rand_score
+
+embedding = np.loadtxt('C:/Users/wzd/Desktop/setting/project/DLPFC/embedding.txt')
+
+data_dim = np.cumsum(np.array([adata_DLPFC_list[0].X.shape[0],
+                               adata_DLPFC_list[1].X.shape[0],
+                               adata_DLPFC_list[2].X.shape[0],
+                               adata_DLPFC_list[3].X.shape[0]]))
+data_dim = np.insert(data_dim,0,0)
+
+true_labels = np.vstack((np.array(adata_DLPFC_list[0].obs['layer']).reshape(-1,1),
+                        np.array(adata_DLPFC_list[1].obs['layer']).reshape(-1,1),
+                        np.array(adata_DLPFC_list[2].obs['layer']).reshape(-1,1),
+                        np.array(adata_DLPFC_list[3].obs['layer']).reshape(-1,1))).ravel()
+cluster_num = len(np.unique(true_labels))
+
+res = mclustpy(embedding, G=cluster_num, modelNames='EEE', random_seed=1)
+pre_labels = np.array(res['classification'])
+ari = adjusted_rand_score(true_labels, pre_labels)
 ```
+Save data and results
 ```python
+# Storing Model Results
+AP_z_slice_0 = [10.] * adata_DLPFC_list[0].X.shape[0]
+AP_z_slice_1 = [20.] * adata_DLPFC_list[1].X.shape[0]
+AP_z_slice_2 = [320.] * adata_DLPFC_list[2].X.shape[0]
+AP_z_slice_3 = [330.] * adata_DLPFC_list[3].X.shape[0]
+
+AP_z = np.vstack((np.array(AP_z_slice_0).reshape(-1,1),
+                 np.array(AP_z_slice_1).reshape(-1,1),
+                 np.array(AP_z_slice_2).reshape(-1,1),
+                 np.array(AP_z_slice_3).reshape(-1,1)))
+
+spatial_spots = np.vstack((np.array(adata_DLPFC_list[0].obsm['align_spatial']),
+                          np.array(adata_DLPFC_list[1].obsm['align_spatial']),
+                          np.array(adata_DLPFC_list[2].obsm['align_spatial']),
+                          np.array(adata_DLPFC_list[3].obsm['align_spatial'])))
+
+spatial_spots = np.hstack((spatial_spots,AP_z))
+
+# np.savetxt('C:/Users/wzd/Desktop/setting/project/DLPFC/alignment_spatial.txt',spatial_spots,fmt='%s')
+# np.savetxt('C:/Users/wzd/Desktop/setting/project/DLPFC/cluster.txt',pre_labels,fmt='%s')
+# torch.save(model_params, "C:/Users/wzd/Desktop/setting/project/DLPFC/model.pth")
 ```
+Prediction all slices
 ```python
+# Mask-based prediction of gene expression
+slice_idx = [151673, 151674, 151675, 151676]
+
+spatial = np.loadtxt('C:/Users/wzd/Desktop/setting/project/DLPFC/alignment_spatial.txt')
+embedding = np.loadtxt("C:/Users/wzd/Desktop/setting/project/DLPFC/embedding.txt")
+domain = np.loadtxt("C:/Users/wzd/Desktop/setting/project/DLPFC/cluster.txt")
+
+for slice_index,slice_name in enumerate(slice_idx):
+
+    Train_spatial_up = spatial[:data_dim[slice_index]]
+    Train_spatial_down = spatial[data_dim[slice_index+1]:]
+
+    Embedding_up = embedding[:data_dim[slice_index]]
+    Embedding_down = embedding[data_dim[slice_index+1]:]
+
+    Pred_spatial = spatial[data_dim[slice_index]:data_dim[slice_index+1]]
+    Pred_embedding_true = embedding[data_dim[slice_index]:data_dim[slice_index+1]]
+
+    Train_spatial = np.vstack((Train_spatial_up,Train_spatial_down))
+    Train_embedding = np.vstack((Embedding_up,Embedding_down))
+
+    pred_embedding = stvg.get_3D_prediction(
+                train_coordinates = Train_spatial,
+                embedding = Train_embedding,
+                spatial_pred = Pred_spatial,
+                noise = False,
+                noise_value = 0.00001,
+                constant_value = 1.0,
+                Rbf_value = 1024)
+    
+    # np.savetxt('C:/Users/wzd/Desktop/setting/project/DLPFC/{}_prediction.txt'.format(slice_idx[slice_index]),pred_embedding,fmt='%s')
 ```
+Read our prediction data
 ```python
+# Splicing prediction embedding for multi-slice gene reconstruction
+prediction_embedding_151673 = np.loadtxt('C:/Users/wzd/Desktop/setting/project/DLPFC/151673_prediction.txt')
+prediction_embedding_151674 = np.loadtxt('C:/Users/wzd/Desktop/setting/project/DLPFC/151674_prediction.txt')
+prediction_embedding_151675 = np.loadtxt('C:/Users/wzd/Desktop/setting/project/DLPFC/151675_prediction.txt')
+prediction_embedding_151676 = np.loadtxt('C:/Users/wzd/Desktop/setting/project/DLPFC/151676_prediction.txt')
+model_checkpoint = torch.load("C:/Users/wzd/Desktop/setting/project/DLPFC/model.pth")
+
+prediction_embedding = np.vstack((prediction_embedding_151673,prediction_embedding_151674,prediction_embedding_151675,prediction_embedding_151676))
+prediction_embedding = torch.tensor(prediction_embedding,dtype=torch.float32)
 ```
+Prepare gene prediction
 ```python
+# Perform relational reconstruction for data reconstruction, utilizing gene expression data for approximation processing.
+prediction_embedding = torch.tensor(prediction_embedding,dtype=torch.float32)
+slice_matrix = torch.tensor(slice_matrix,dtype=torch.float32)
+edge_list = []
+edge_list.append(adj_matrix.row.tolist())
+edge_list.append(adj_matrix.col.tolist())
+adj_tensor = torch.LongTensor(edge_list)
 ```
+Complete gene expression prediction
+```python
+# Complete gene expression prediction
+Prediction_gene_expression = stvg.gene_prediction(
+    slice_matrix = slice_matrix,
+    prediction_embedding = prediction_embedding,           
+    adj_matrix = adj_tensor,                        
+    checkpoint = model_checkpoint,                         
+    model_layer = [slice_matrix.shape[1],512,24,1],                        
+    all_gat = True,                            
+    logvar = None,                             
+    device = torch.device('cuda:0')                           
+)
+```
+Done!
+
+
+Human heart dataset
+```python
+# Import packages and read raw data
+import stVGP as stvg
+import scanpy as sc
+import anndata as ad
+import numpy as np
+import warnings
+import torch
+warnings.filterwarnings("ignore")
+
+# Read data
+# This dataset can be downloaded directly from Figshare (https://figshare.com/authors/Zedong_Wang/20593784). 
+# The raw data and citations can be found in the data description.
+
+# Here, we will perform the stVGP elimination batch workflow.
+# Read data from different developmental stages and batches
+
+# To visually demonstrate stVGP's ability to eliminate batch effects across different developmental stages, 
+# we have omitted the cross-period alignment step here.
+
+slices_use_45 = ["Human_heart_1","Human_heart_2","Human_heart_3",
+                 "Human_heart_4"]
+
+slices_use_65 = ["Human_heart_1","Human_heart_2","Human_heart_3",
+                 "Human_heart_4","Human_heart_5","Human_heart_6",
+                 "Human_heart_7","Human_heart_8","Human_heart_9"]
+
+slices_use_9 = ["Human_heart_1","Human_heart_2","Human_heart_3",
+                "Human_heart_4","Human_heart_5","Human_heart_6",]
+
+adata_list_45 = []
+adata_list_65 = []
+adata_list_9 = []
+
+for slice_id in slices_use_45:
+    adata_i = sc.read("C:/Users/wzd/Desktop/setting/project/Human heart/4.5-5PCW/{}.h5ad".format(slice_id))
+    adata_list_45.append(adata_i)
+
+for slice_id in slices_use_65:
+    adata_i = sc.read("C:/Users/wzd/Desktop/setting/project/Human heart/6.5PCW/{}.h5ad".format(slice_id))
+    adata_list_65.append(adata_i)
+
+for slice_id in slices_use_9:
+    adata_i = sc.read("C:/Users/wzd/Desktop/setting/project/Human heart/9PCW/{}.h5ad".format(slice_id))
+    adata_list_9.append(adata_i)
+```
+Data Preprocessing
+```python
+# Data Preprocessing
+# Batch Data Preprocessing
+adata_list = adata_list_45 + adata_list_65 + adata_list_9
+for i, adata in enumerate(adata_list):
+    adata.obs_names = str(i+1) + 'x' + adata.obs_names.astype(str)
+ad_concat = ad.concat(adata_list)
+adata_list = stvg.Batch_preprocess(adata_list,clear = True)
+adata_re_concat = ad.concat(adata_list)
+```
+Prepare data
+```python
+# Extract whole-slide expression data
+ST_need_reconstruction_matrix = adata_re_concat.X.toarray()
+all_spatial_net = None
+use_batch = True
+```
+Run stVGP
+```python
+# Please note that the output of stVGP may vary slightly depending on the specific image and batch settings selected.
+recon_x, embedding, model_params, inference_outputs, generative_outputs = stvg.train_stVGP(
+                                            ST_need_reconstruction_matrix = ST_need_reconstruction_matrix,
+                                            all_spatial_net = all_spatial_net,
+                                            use_batch = use_batch,
+                                            batch_key = 'slice_id',
+                                            adata_infor = adata_re_concat,
+                                            use_image = False,
+                                            adata_infor_image = None,
+                                            GP_set = False,
+                                            GP_spatial_infor = None,
+                                            lr = 1e-3,
+                                            weight_decay = 1e-4,
+                                            training_epoch = 1000,
+                                            num_heads = 1,
+                                            device= torch.device('cuda' if torch.cuda.is_available() else 'cpu') ,
+                                            save_model = False,
+                                            save_model_path = 'path',
+                                            hidden_embedding = [512,32],
+                                            random_seed = 42,
+                                            optimize_method = 'adam',
+                                            whether_gradient_clipping = False,
+                                            gradient_clipping = 5.0,
+                                            all_gat = False,
+                                            )
+```
+Save data
+```python
+# Storing hidden layer data and reslicing(if needed)
+adata_re_concat.obsm['embedding'] = embedding
+unique_slices = adata_re_concat.obs['slice_id'].unique()
+adata_list = [
+        adata_re_concat[adata_re_concat.obs['slice_id'] == s_id].copy() 
+        for s_id in unique_slices
+    ]
+```
+Batch correction
+```python
+# Batch correction and Result Visualization
+sc.pp.neighbors(adata_re_concat, use_rep='embedding')
+sc.tl.umap(adata_re_concat)
+sc.pl.umap(adata_re_concat, color='slice_id', 
+           title='Batch (Slice) Info',
+           wspace=0.4)
+```
+Done!
+
+For more data analysis and details, please refer to the stVGP tutorial (https://github.com/wzdrgi/stVGP/tree/main/Tutorial).
+
 ## Tutorials
-Five step-by-step tutorials are included in the Tutorial folder
+Five step-by-step tutorials are included in the Tutorial folder (https://github.com/wzdrgi/stVGP/tree/main/Tutorial).
 
 ## Data and Preprocessing Workflow
 The raw data files can be located by referring to Data_available.txt, which provides a list of all available datasets and their paths. All data files used in the tutorials can be generated directly through the provided code.
+
+## Computing Environment
+You can refer to requires.txt and R_requires.txt for environment configuration.
 
 

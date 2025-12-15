@@ -424,15 +424,15 @@ Can refer to requires.txt and R_requires.txt for environment configuration. We c
 2. Domain and batch correction:The function “train_stVGP” requires input of merged slice gene expression data, spatial information, and selection of modes such as whether to eliminate batch effects or perform cross-modal fusion. Additionally, different selection modes yield distinct return details that must be examined within the code (https://github.com/wzdrgi/stVGP/blob/main/stVGP.py).
 ```
     Key Parameter:  
-    Parameter "ST_need_reconstruction_matrix":
-    Parameter "all_spatial_net":
-    Parameter "use_batch":
-    Parameter "batch_key":
-    Parameter "adata_infor":
-    Parameter "use_image":
-    Parameter "adata_infor_image":
-    Parameter "GP_set":
-    Parameter "GP_spatial_infor":
+    Parameter "ST_need_reconstruction_matrix": The expression data after full-slice stitching, with dimensions spot * features.
+    Parameter "all_spatial_net": Spatial adjacency across slices. "ST_need_reconstruction_matrix" and "all_spatial_net" can be directly obtained through stVGP's adata_preprocess_adjnet.
+    Parameter "use_batch": If set to True, stVGP employs an encoding method for batch correction; otherwise, it uses the index mapping strategy for batch correction.
+    Parameter "adata_infor": Information for all slices, represented as a list of all slices. If "use_batch" is true, the adata_infor should not be None.
+    Parameter "batc_key": The storage keyword for batch information of all slices is stored in `adata.obsm[batc_key]`.
+    Parameter "use_image": If set to True, stVGP performs cross-modal analysis using image modalities.
+    Parameter "adata_infor_image": Storage of image information, representing a list of all slice adata. When "use_image" is set to True, "adata_infor_image" cannot be set to `None`.
+    Parameter "GP_set": Switch for enabling Gaussian processes in hidden layers. 
+    Parameter "GP_spatial_infor": After enabling the Gaussian process, all spatial coordinates of points required by the Gaussian process must be provided. When GP_set is set to True, GP_spatial_infor cannot be empty.
 ```
 3. Gene prediction:The functions “get_3D_prediction” and “gene_prediction” predict the latent layer information and final gene expression of virtual slices, respectively. get_3D_prediction requires input of trained latent layer information and virtual spatial coordinates, while gene_prediction requires input of predicted latent layer information and initial slice expression information. They return the latent layer and gene expression of virtual slices, respectively.  
 ```

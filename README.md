@@ -409,7 +409,17 @@ The raw data files can be located by referring to Data_available.txt, which prov
 Can refer to requires.txt and R_requires.txt for environment configuration. We conducted all data analysis on the Win10.
 
 ## Documentation
-1. Rigid Alignment and STN Alignment: The function "gene_rigid_alignment" performs rigid alignment on all slices. It requires input of multi-slice information, selected gene information, and the alignment mode. The function "STN_rigid_alignment" performs non-rigid alignment on all slices and integrates rigid alignment. This mode must be run after multi-slice rigid alignment. It requires input of multi-slice information, selected gene information, and the alignment mode.  
+1. Spatial gene selection module: The function "select_gene" completes the rasterization of the space and the labeling of spatial tags.    
+```
+    Key Parameter:  
+    Parameter "input_adata_list": A list of multi-slice spatial transcriptomes arranged in sequential order.
+    Parameter "ref_adata_num": Index of adata to be analyzed spatially genetically.
+    Parameter "spot_make": Number of x and y subspace divisions. After completion, the entire space will be partitioned into spot_make² number of subspaces.  
+    Parameter "save_data": Whether or not to save.
+    Parameter "key_words": keywords for spatial coordinates of the transcriptomics datasets. stVGP will search for data.obsm[key_words] 
+    Parameter "savepath": Save location. When save_data was Ture, "savepath" can not be None. 
+```
+2. Rigid Alignment and STN Alignment: The function "gene_rigid_alignment" performs rigid alignment on all slices. It requires input of multi-slice information, selected gene information, and the alignment mode. The function "STN_rigid_alignment" performs non-rigid alignment on all slices and integrates rigid alignment. This mode must be run after multi-slice rigid alignment. It requires input of multi-slice information, selected gene information, and the alignment mode.  
 ```
     Key Parameter:  
     Parameter "stadata_input": A list of multi-slice spatial transcriptomes arranged in sequential order.  
@@ -421,7 +431,12 @@ Can refer to requires.txt and R_requires.txt for environment configuration. We c
     Parameter "align_method": Choosing between the ICP algorithm and the optimization algorithm.
     Parameter "icp_iterations","maxiter": Maximum iteration count for ICP algorithm or optimization algorithm.  
 ```
-2. Domain and batch correction:The function “train_stVGP” requires input of merged slice gene expression data, spatial information, and selection of modes such as whether to eliminate batch effects or perform cross-modal fusion. Additionally, different selection modes yield distinct return details that must be examined within the code (https://github.com/wzdrgi/stVGP/blob/main/stVGP.py).
+3. stVGP Preprocessing Module. stVGP provides extensive data preprocessing methods to facilitate adaptation to different data types. The primary functions are "st_preprocess", "adata_preprocess_adjnet", and "spatial_reconstruction". st_preprocess is primarily designed for initial data processing and is responsible for data cleansing.   
+```
+    Key Parameter:  
+    Parameter "stadata_input": A list of multi-slice spatial transcriptomes arranged in sequential order.  
+```
+4. Domain and batch correction:The function “train_stVGP” requires input of merged slice gene expression data, spatial information, and selection of modes such as whether to eliminate batch effects or perform cross-modal fusion. Additionally, different selection modes yield distinct return details that must be examined within the code (https://github.com/wzdrgi/stVGP/blob/main/stVGP.py).
 ```
     Key Parameter:  
     Parameter "ST_need_reconstruction_matrix": The expression data after full-slice stitching, with dimensions spot * features.
@@ -447,7 +462,7 @@ Can refer to requires.txt and R_requires.txt for environment configuration. We c
     Parameter "gradient_clipping": Gradient clipping value, default is 5.0.
     Parameter "all_gat": all_gat, whether to replace the model's linear layer with GATConv.  
 ```
-3. Gene prediction:The functions “get_3D_prediction” and “gene_prediction” predict the latent layer information and final gene expression of virtual slices, respectively. get_3D_prediction requires input of trained latent layer information and virtual spatial coordinates, while gene_prediction requires input of predicted latent layer information and initial slice expression information. They return the latent layer and gene expression of virtual slices, respectively.  
+5. Gene prediction:The functions “get_3D_prediction” and “gene_prediction” predict the latent layer information and final gene expression of virtual slices, respectively. get_3D_prediction requires input of trained latent layer information and virtual spatial coordinates, while gene_prediction requires input of predicted latent layer information and initial slice expression information. They return the latent layer and gene expression of virtual slices, respectively.  
 ```
     Key Parameter:
     Parameter "train_coordinates": Spatial coordinates of the hidden layer used for training. 

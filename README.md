@@ -39,7 +39,7 @@ Due to the strong version dependency of the R module in stVGP during gene select
 ## Quick-start tutorial
 Here, we provide guidance on using the stVGP sample data to help you quickly get started with our method. Here we provide two datasets for testing: the human dorsolateral prefrontal cortex (DLPFC) dataset (can be download at https://figshare.com/authors/Zedong_Wang/20593784) and the human developing heart dataset (can be download at https://figshare.com/authors/Zedong_Wang/20593784).
 
-Here, we first demonstrate the stVGP domain identification and gene expression prediction workflow on the DLPFC dataset. Subsequently, we demonstrate the stVGP batch-clearing workflow on the human cardiac dataset. Since only batch-clearing needs to be shown for the cardiac dataset, we skip the slice alignment process. Note that if users skip the alignment process, they should manually set `use_batch` to True in the `train_stVGP` function. All datasets can be download at https://figshare.com/authors/Zedong_Wang/20593784.
+Here, we first demonstrate the stVGP domain identification and gene expression prediction workflow on the DLPFC dataset. Subsequently, we demonstrate the stVGP batch-clearing workflow on the human cardiac dataset. Since only batch-clearing needs to be shown for the cardiac dataset, we skip the slice alignment process. Note that if users skip the alignment process, they should manually set `use_batch` to True in the `train_stVGP` function. All datasets can be download at https://figshare.com/authors/Zedong_Wang/20593784. Please replace the path for saving and reading data during the process with the location where you store your data.
 
 DLPFC
 
@@ -436,16 +436,16 @@ Can refer to requires.txt and R_requires.txt for environment configuration. We c
     Parameter "lr": stVGP learning rate, default value 0.001.
     Parameter "weight_decay": Weight decay (L2 penalty) coefficient, default value 1e-4.
     Parameter "training_epoch": The number of training iterations for stVGP, defaulting to 1500.
-    Parameter "num_heads": stVGP learning rate, default value 0.001.
-    Parameter "device": stVGP learning rate, default value 0.001.
-    Parameter "save_model": stVGP learning rate, default value 0.001.
-    Parameter "save_model_path": stVGP learning rate, default value 0.001.
-    Parameter "hidden_embedding": stVGP learning rate, default value 0.001.
-    Parameter "random_seed": stVGP learning rate, default value 0.001.
-    Parameter "optimize_method": stVGP learning rate, default value 0.001.
-    Parameter "whether_gradient_clipping": stVGP learning rate, default value 0.001.
-    Parameter "gradient_clipping": stVGP learning rate, default value 0.001.
-    Parameter "all_gat": stVGP learning rate, default value 0.001.  
+    Parameter "num_heads": The number of heads in the multi-head attention mechanism, defaulting to 1.
+    Parameter "device": The device used for computation defaults to CUDA. When CUDA is unavailable, it falls back to the CPU..
+    Parameter "save_model": Whether to save model parameters. Default is False. If set to True, manually configure the save_model_path..
+    Parameter "save_model_path": Model storage path. When `save_model` is set to True, do not leave this field empty.
+    Parameter "hidden_embedding": The hidden layer parameters for stVGP are specified as a list containing two numbers: the first number represents the hidden layer dimension, and the second number represents the embedding dimension.
+    Parameter "random_seed": The random seed used for computation.
+    Parameter "optimize_method": The optimizer selected by "optimize_method", defaulting to Adam.
+    Parameter "whether_gradient_clipping": Enable gradient clipping. If set to Yes, configure "gradient_clipping".
+    Parameter "gradient_clipping": Gradient clipping value, default is 5.0.
+    Parameter "all_gat": all_gat, whether to replace the model's linear layer with GATConv.  
 ```
 3. Gene prediction:The functions “get_3D_prediction” and “gene_prediction” predict the latent layer information and final gene expression of virtual slices, respectively. get_3D_prediction requires input of trained latent layer information and virtual spatial coordinates, while gene_prediction requires input of predicted latent layer information and initial slice expression information. They return the latent layer and gene expression of virtual slices, respectively.  
 ```

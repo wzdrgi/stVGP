@@ -5,7 +5,7 @@ A variational spatiotemporal Gaussian process framework designed to integrate mu
 ![Fig 1.jpg](https://s2.loli.net/2025/08/07/dFUaJNTtykIsrCW.jpg)
 
 # Installation
-The stVGP package is developed based on the Python libraries Scanpy, PyTorch and PyG (PyTorch Geometric) framework, and can be run on GPU (recommend) or CPU. Before installing stVGP, please ensure that Scanpy, PyTorch, and PyG (PyTorch Geometric) are already installed. These dependencies are required for stVGP to function properly, but they are not automatically installed during the installation process to allow greater flexibility.
+The stVGP package is developed based on the Python libraries Scanpy, PyTorch and PyG (PyTorch Geometric) framework, and can be run on GPU (recommend) or CPU. Before installing stVGP, please ensure that Scanpy, PyTorch, and PyG (PyTorch Geometric) are already installed. These dependencies are required for stVGP to function properly, but they are not automatically installed during the installation process to allow greater flexibility. For specific versions, refer to the Computing environment module or consult Python_requires.txt and R_requires.txt.
 
 ## Install stVGP
     pip install stVGP

@@ -421,20 +421,56 @@ Can refer to requires.txt and R_requires.txt for environment configuration. We c
 ```
 2. Rigid Alignment and STN Alignment: The function "gene_rigid_alignment" performs rigid alignment on all slices. It requires input of multi-slice information, selected gene information, and the alignment mode. The function "STN_rigid_alignment" performs non-rigid alignment on all slices and integrates rigid alignment. This mode must be run after multi-slice rigid alignment. It requires input of multi-slice information, selected gene information, and the alignment mode.  
 ```
-    Key Parameter:  
+    "gene_rigid_alignment" Key Parameter:  
     Parameter "stadata_input": A list of multi-slice spatial transcriptomes arranged in sequential order.  
     Parameter "gene_input": Selected list of spatial genes.  
     Parameter "ini_spatial","add_spatial": The original spatial coordinate keywords stored in the .obsm within the adata (anndata) and the new keywords storing the aligned coordinates after alignment slicing.  
-    Parameter "align_model": The selected alignment model will either align all slices with a single slice or sequentially align all slices.  
+    Parameter "align_model": The selected alignment model will either align all slices with a single slice or sequentially align all slices. Select 'single_template_alignment' or 'sequential_alignment'  
     Parameter "gene_input_list": When "align_model" is set to "sequential_alignment", "gene_input_list" is required: a two-dimensional list containing the gene selection results for each slice.  
     Parameter "ref_label": When aligning all slices with a template slice, the index of the diaphragm slice.  
     Parameter "align_method": Choosing between the ICP algorithm and the optimization algorithm.
-    Parameter "icp_iterations","maxiter": Maximum iteration count for ICP algorithm or optimization algorithm.  
+    Parameter "icp_iterations","maxiter": Maximum iteration count for ICP algorithm or optimization algorithm.
+    ###
+    "STN_rigid_alignment" Key Parameter:
+    Parameter "stadata_input": A list of multi-slice spatial transcriptomes arranged in sequential order.
+    Parameter "select_gene_final": Selected list of spatial genes.
+    Parameter "ref_label": When aligning all slices with a template slice, the index of the diaphragm slice.
+    Parameter "ini_spatial": The original spatial coordinate keywords stored in the .obsm within the adata (anndata).  
+    Parameter "STN_alignment_key": The rigid alignment spatial coordinate keywords stored in the .obsm within the adata (anndata).
+    Parameter "add_spatial": The new keywords storing the aligned coordinates after alignment slicing.
+    Parameter "gene_input_list": When "align_model" is set to "sequential_alignment", "gene_input_list" is required: a two-dimensional list containing the gene selection results for each slice.
+    Parameter "align_model": The selected alignment model will either align all slices with a single slice or sequentially align all slices. Select 'single_template_alignment' or 'sequential_alignment'.
+    Parameter "alignment_epoch": Total training rounds for alignment.
+    Parameter "device": The device used for computation defaults to CUDA. When CUDA is unavailable, it falls back to the CPU.  
+    Parameter "quantiles": Truncation range of the alignment process. 
+    Parameter "attention": Enable attention mechanism fusion. Default to false.  
 ```
-3. stVGP Preprocessing Module. stVGP provides extensive data preprocessing methods to facilitate adaptation to different data types. The primary functions are "st_preprocess", "adata_preprocess_adjnet", and "spatial_reconstruction". st_preprocess is primarily designed for initial data processing and is responsible for data cleansing.   
+3. stVGP Preprocessing Module. stVGP provides extensive data preprocessing methods to facilitate adaptation to different data types. The primary functions are "st_preprocess", "adata_preprocess_adjnet", and "spatial_reconstruction". "st_preprocess" is primarily designed for raw data processing and is responsible for data cleansing. "adata_preprocess_adjnet" is responsible for converting data into the format suitable for training stVGP models. "spatial_reconstruction" primarily performs further processing on the data.   
 ```
-    Key Parameter:  
-    Parameter "stadata_input": A list of multi-slice spatial transcriptomes arranged in sequential order.  
+    "st_preprocess" Key Parameter:  
+    Parameter "input_adata_list": A list of multi-slice spatial transcriptomes arranged in sequential order.
+    Parameter "n_hvg_group": Number of highly variable genes for reference anndata.
+    Parameter "flavor": Methods for selecting highly variable genes.
+    Parameter "min_genes": Minimum number of genes expressed required for a cell to pass filtering.
+    Parameter "min_cells": Minimum number of cells expressed required for a gene to pass filtering.
+    ###
+    "adata_preprocess_adjnet" Key Parameter:  
+    Parameter "input_adata": A list of AnnData objects (spatial transcriptomics slices), usually arranged in sequential order.
+    Parameter "align_model": The alignment strategy to use. Options are 'single_template_alignment' (align all to one reference) or 'sequential_alignment' (align adjacent slices).
+    Parameter "ref_label": The index of the reference slice in the input list (only used when align_model is 'single_template_alignment').
+    Parameter "spatial_label": The key in `.obsm` that stores the aligned spatial coordinates to be used for network construction.
+    Parameter "add_net_keywords_self": The key name used to store or retrieve the intra-slice adjacency matrix in `.obsm`.
+    Parameter "n_neighbors": The number of nearest neighbors to select when constructing the spatial adjacency matrix.
+    Parameter "no_cross": If True, the function will only construct intra-slice networks and exclude cross-slice (inter-slice) connections.
+    ###
+    "spatial_reconstruction" Key Parameter:  
+    Parameter "adata": The input AnnData object containing spatial transcriptomics data.
+    Parameter "alpha": The smoothing coefficient. It controls the weight of the neighbor-averaged expression in the final reconstruction (X_rec = alpha * smoothed_X + X).
+    Parameter "n_neighbors": The number of spatial neighbors used to construct the nearest neighbor graph.
+    Parameter "n_pcs": The number of principal components used to calculate cosine similarity weights between neighbors.
+    Parameter "use_highly_variable": Whether to use highly variable genes when computing PCA.
+    Parameter "normalize_total": Whether to normalize the data (normalize total counts per cell) before processing.
+    Parameter "copy": If True, returns a new AnnData object; if False, modifies the input AnnData in place.
 ```
 4. Domain and batch correction:The function “train_stVGP” requires input of merged slice gene expression data, spatial information, and selection of modes such as whether to eliminate batch effects or perform cross-modal fusion. Additionally, different selection modes yield distinct return details that must be examined within the code (https://github.com/wzdrgi/stVGP/blob/main/stVGP.py).
 ```

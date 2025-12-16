@@ -500,12 +500,22 @@ Can refer to requires.txt and R_requires.txt for environment configuration. We c
 ```
 5. Gene prediction:The functions “get_3D_prediction” and “gene_prediction” predict the latent layer information and final gene expression of virtual slices, respectively. get_3D_prediction requires input of trained latent layer information and virtual spatial coordinates, while gene_prediction requires input of predicted latent layer information and initial slice expression information. They return the latent layer and gene expression of virtual slices, respectively.  
 ```
-    Key Parameter:
+    "get_3D_prediction" Key Parameter:
     Parameter "train_coordinates": Spatial coordinates of the hidden layer used for training. 
     Parameter "embedding": Hidden layer information for training. The rows in embedding and train_coordinates should correspond to each other. The number of spots used for training.
     Parameter "spatial_pred": Spatial coordinate points requiring stVGP for prediction. 
     Parameter "noise": Whether to introduce white noise. 
     noise_value "noise": Noise level.
     constant_value "noise": Constant washout for Gaussian processes.
-    Rbf_value "noise": Smoothness of Gaussian processes.   
+    Rbf_value "noise": Smoothness of Gaussian processes.
+    ###
+    "gene_prediction" Key Parameter:
+    Parameter "slice_matrix": The gene expression matrix of the original reference slices, used to regenerate variance if needed.
+    Parameter "prediction_embedding": The predicted latent layer information (embeddings) for the virtual slices or target locations.
+    Parameter "adj_matrix": The spatial adjacency matrix (neighborhood graph) representing connections between spots.
+    Parameter "checkpoint": The dictionary containing trained model parameters (state_dict) of the stVGP model.
+    Parameter "model_layer": A list of model architectural hyperparameters: [in_channels, hidden_channels, out_channels, num_heads].
+    Parameter "all_gat": Boolean flag indicating whether to use the full GAT architecture (GP_VAE_all) or standard architecture (GP_VAE).
+    Parameter "logvar": The variance tensor from the VAE training. If None, it will be re-inferred from the input data.
+    Parameter "device": Computation device (e.g., 'cuda' or 'cpu'). Must be consistent with the device used during training.
 ```

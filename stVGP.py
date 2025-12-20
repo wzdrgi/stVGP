@@ -1055,7 +1055,10 @@ def Transformer_alignment(stadata_input,
         
         if gene_input_list == None:
             raise ValueError("Invalid flavor. " \
-            "Please make sure that gene_input_list is the same length as stadata_input.") 
+            "Please make sure that gene_input_list is not None when align_model was set sequential_alignment.") 
+        if len(gene_input_list) != len(stadata_input):
+            raise ValueError("Invalid flavor. " \
+            "Please ensure that gene_input_list and stadata_input have the same length.") 
         stadata_input = stadata_input.copy()
         for index in range(len(stadata_input)):
             gene_input = gene_input_list[index].copy()
@@ -1326,6 +1329,7 @@ def get_spatial_net(input_adata:list,                           # a series of al
                     ):
 
     # Adding internal networks to each slice
+    input_adata = input_adata.copy()
     for index in range(len(input_adata)):
         coor = pd.DataFrame(input_adata[index].obsm[coordinates_label])
         coor.index = input_adata[index].obs.index
@@ -1683,6 +1687,16 @@ def compute_mmd_loss(x, y, betas=(0.1, 0.5, 1.0, 5.0, 10.0)):
     xy_kernel = compute_kernel(x, y, betas)
     return torch.mean(x_kernel) + torch.mean(y_kernel) - 2 * torch.mean(xy_kernel)
 
+def compute_mmd_loss_minibatch(x, y, betas=(0.1, 0.5, 1.0, 5.0, 10.0), batch_size=64):
+    device = x.device
+    idx_x = torch.randperm(x.size(0), device=device)[:batch_size]
+    idx_y = torch.randperm(y.size(0), device=device)[:batch_size]
+
+    x_mb = x[idx_x]
+    y_mb = y[idx_y]
+
+    return compute_mmd_loss(x_mb, y_mb, betas)
+
 def spatial_reconstruction(
     adata: AnnData,
     alpha: float = 1,
@@ -1729,21 +1743,35 @@ def Batch_preprocess(stdata_list,
         
     sc.pp.highly_variable_genes(adata_concat, n_top_genes=n_top_genes, flavor='seurat_v3')
     adata_concat_subset = adata_concat[:, adata_concat.var['highly_variable']]
-    adata_concat_subset.obs['slice_id'] = adata_concat_subset.obs['slice_id'].astype(int).astype(str)
+
+    col = adata_concat_subset.obs['slice_id']
+    col_numeric = pd.to_numeric(col, errors='coerce')
+
+    if not col_numeric.isna().any():
+        adata_concat_subset.obs['slice_id'] = adata_concat_subset.obs['slice_id'].astype(int).astype(str)
+    else:
+        pass
+
     unique_slices = adata_concat_subset.obs['slice_id'].unique()
+
+    original_map = { adata_index : stdata_list[adata_index].uns['spatial'] for adata_index in range(len(stdata_list))}
+
     adata_list = [
         adata_concat_subset[adata_concat_subset.obs['slice_id'] == s_id].copy() 
         for s_id in unique_slices
     ]
-    for adata in adata_list:
+
+    for adata_index, adata in enumerate(adata_list):
         spatial_reconstruction(adata)
+        adata.uns['spatial'] = original_map[adata_index]
     return adata_list
 
 class GP_Batch_VAE(nn.Module):
-    # only batch
+    # MLP-VAE
     def __init__(
         self,
         in_channels: int,
+        in_channels_image: int,
         n_obs: int,
         n_batch: int,
         hidden_channels: int = 128,
@@ -1756,9 +1784,17 @@ class GP_Batch_VAE(nn.Module):
         self.px_r = torch.nn.Parameter(torch.randn(in_channels))
         # GP-VAE
         self.layer1 = Layer1(n_in=in_channels, n_out=hidden_channels, dropout_rate=dropout_rate)
+        self.layerI1 = Layer1(n_in=in_channels_image, n_out=hidden_channels, dropout_rate=dropout_rate)
+
         self.layer2 = Layer2(n_in=hidden_channels, n_out=out_channels, var_activation=var_activation)
+        self.layerI2 = Layer2(n_in=hidden_channels, n_out=out_channels, var_activation=var_activation)
+
         self.layer3 = Layer3(n_in=out_channels+n_batch,n_out=hidden_channels,dropout_rate=dropout_rate)
+        self.layerI3 = Layer3(n_in=out_channels,n_out=hidden_channels,dropout_rate=dropout_rate)
+
         self.layer4 = Layer4(n_in=hidden_channels,n_out=in_channels)
+        self.layerI4 = Layer4(n_in=hidden_channels, n_out=in_channels_image)
+
         # Graph Infor
         self.layerZ = LayerZ(n_obs=n_obs)
 
@@ -1766,30 +1802,68 @@ class GP_Batch_VAE(nn.Module):
         x1 = self.layer1(x)
         qz, z = self.layer2(x1)
         return dict(x1=x1, z=z, qz=qz)
+    
+    def inferenceI(self, x):
+        x1 = self.layerI1(x)
+        qz, z = self.layerI2(x1)
+        return dict(x1=x1, z=z, qz=qz)
 
-    def generative(self, z, batch_index):
+    def generative(self, z, batch_index, ZI = None):
         if batch_index is None:
             x3 = self.layer3(z)
         else:
             x3 = self.layer3(torch.cat((z, batch_index), dim=-1))
+        if ZI is not None:
+            XI3 = self.layerI3(ZI)
+            XI4 = self.layerI4(XI3)
+        else:
+            XI4 = None
         x4 = self.layer4(x3)
         pz = Normal(torch.zeros_like(z), torch.ones_like(z))
-        return dict(x3=x3, x4=x4, pz=pz)
+        return dict(x3=x3, x4=x4, pz=pz, image_re=XI4)
 
     def loss(self,
              x,
              inference_outputs,
              generative_outputs,
-             Z_weight):
+             Z_weight,
+             weight_mmd = 1e-5,
+             xI = None,
+             inference_outputsI = None):
+        
         kl_divergence_z = kl(inference_outputs['qz'], generative_outputs['pz']).sum(dim=1)
+        if xI is not None and inference_outputsI is not None:
+            kl_divergence_zI = kl(inference_outputsI['qz'], generative_outputs['pz']).sum(dim=1)
+        else:
+            kl_divergence_zI = torch.zeros_like(kl_divergence_z)
+            kl_loss = 0
         reconst_loss = torch.norm(x - generative_outputs['x4'])
         loss = (6 - 5 * Z_weight) * (torch.mean(kl_divergence_z) + reconst_loss)
+
         if Z_weight > 0.5:
             loss += Z_weight * torch.norm(inference_outputs['x1'] - self.layerZ(inference_outputs['x1']))
             loss += Z_weight * torch.norm(inference_outputs['qz'].loc - self.layerZ(inference_outputs['qz'].loc))
             if self.n_batch == 0:
                 loss += Z_weight * torch.norm(generative_outputs['x3'] - self.layerZ(generative_outputs['x3']))
+    
+        if xI is not None and generative_outputs['image_re'] is not None:
+            reconst_loss_i = torch.norm(xI - generative_outputs['image_re'])
+            reconst_loss = reconst_loss + reconst_loss_i
+
+        if torch.mean(kl_divergence_zI) > 0:
+            kl_loss = torch.mean(kl_divergence_z) + torch.mean(kl_divergence_zI)
+
+        if inference_outputsI is not None:
+            contrast_loss_f = torch.norm(inference_outputs['qz'].loc - inference_outputsI['qz'].loc)
+            MMD_loss = compute_mmd_loss_minibatch(inference_outputs['qz'].loc,inference_outputsI['qz'].loc)
+            contrast_loss = contrast_loss_f +  MMD_loss
+        else:
+            contrast_loss = 0
+        
+        loss = loss + kl_loss / 2 + weight_mmd * (contrast_loss / 2)
+        
         return loss
+
 
 class ResNetDataset(torch.utils.data.Dataset):
     def __init__(self, dataset):
@@ -1907,7 +1981,7 @@ class GP_image_cross_model_VAE(nn.Module):
         inference_outputs,
         inference_outputsI,
         generative_outputs,
-        weight_mmd = 0.001,
+        weight_mmd = 1e-5,
     ):
         
         kl_divergence_z = kl(inference_outputs['qz'], generative_outputs['pz']).sum(dim=1)
@@ -1928,33 +2002,46 @@ class GP_image_cross_model_VAE(nn.Module):
         return loss
 
 class GP_VAE(nn.Module):
-    # index batch
-    def __init__(self, in_channels, hidden_channels, out_channels, num_heads):
+    '''
+    All built using graph attention for variational inference
+    '''
+    def __init__(self, in_channels, hidden_channels, out_channels, num_heads, 
+                 n_batch = 0,
+                 in_channels_image = 2048, var_activation: Optional[Callable] = None,):
         super(GP_VAE, self).__init__()
 
         # encode
-        self.gat1 = GATConv(in_channels, hidden_channels, heads=num_heads, concat=True,
-                            dropout = 0.1, add_self_loops= True, bias=False)
-        self.gat2 = GATConv(hidden_channels *  num_heads, hidden_channels, heads=num_heads, concat=True,
-                            dropout = 0.1, add_self_loops= True, bias=False)
+        self.gat1 = nn.Linear(in_channels, hidden_channels)
+        self.gat2 = nn.Linear(hidden_channels, hidden_channels)
         
-        # or Direct GAT generation, similar to VGAE's GCN generation?
-        self.fc_mu = nn.Linear(hidden_channels * num_heads, out_channels)
-        self.fc_logvar = nn.Linear(hidden_channels * num_heads, out_channels)
+        self.layerI1 = Layer1(n_in = in_channels_image, n_out = hidden_channels * num_heads, dropout_rate=0.1)
+        self.layerI2 = Layer2(n_in = hidden_channels * num_heads, n_out = hidden_channels, var_activation=var_activation)
 
-        #decode
-        self.gat3 = GATConv(out_channels, hidden_channels, heads=num_heads, concat=True,
-                            dropout = 0.1, add_self_loops= True, bias=False)  
-        self.gat4 = GATConv(hidden_channels * num_heads , in_channels, heads=num_heads, concat=True,
-                            dropout = 0.1, add_self_loops= True, bias=False)
+        self.fc_mu = nn.Linear(hidden_channels, out_channels)
+        self.fc_logvar = nn.Linear(hidden_channels, out_channels)
+
+        self.fc_mu_I = nn.Linear(hidden_channels, out_channels)
+        self.fc_logvar_I = nn.Linear(hidden_channels, out_channels)
         
-    def encode(self, x, edge_index):
-        x = F.relu(self.gat1(x, edge_index))
-        x = self.gat2(x, edge_index)
-        return self.fc_mu(x), self.fc_logvar(x)
-    
+        #decode
+        self.gat3 = nn.Linear(out_channels+n_batch, hidden_channels)  
+        self.gat4 = nn.Linear(hidden_channels, in_channels)
+        
+        self.layerI3 = Layer3(n_in = out_channels, n_out = hidden_channels, dropout_rate=0.1)
+        self.layerI4 = Layer4(n_in = hidden_channels, n_out=in_channels_image)
+        
+    def encode(self, x, X_I=None):
+        x = F.relu(self.gat1(x))
+        x = self.gat2(x)
+        if X_I is not None:
+            xI = self.layerI1(X_I)
+            xI = self.layerI2(xI)
+            return self.fc_mu(x), self.fc_logvar(x), self.fc_mu_I(xI), self.fc_logvar_I(xI)
+        else:
+            return self.fc_mu(x), self.fc_logvar(x), None, None
     
     def reparametrize(self, mu, logvar):
+        logvar = torch.clamp(logvar, min=-10, max=10)
         std = logvar.mul(0.5).exp_()
         if torch.cuda.is_available():
             eps = torch.cuda.FloatTensor(std.size()).normal_()
@@ -1962,21 +2049,48 @@ class GP_VAE(nn.Module):
             eps = torch.FloatTensor(std.size()).normal_()
         eps = Variable(eps)
         return eps.mul(std).add_(mu)
-    
-    # def reparametrize(self, mu, logvar):
-    #     std = logvar.mul(0.5).exp_()  
-    #     eps = torch.randn_like(std)   
-    #     return eps.mul(std).add_(mu)  
 
-    def decode(self, z, edge_index):
-        h3 = F.relu(self.gat3(z, edge_index))
-        h4 = self.gat4(h3,edge_index)
-        return h4
+    def decode(self, z, ZI=None, batch_index=None):
+        if ZI is not None and batch_index is None:
+            h3 = F.relu(self.gat3(z))
+            h4 = self.gat4(h3)
+
+            HI3 = self.layerI3(ZI)
+            HI4 = self.layerI4(HI3)
+            return h4, HI4
+        
+        if ZI is not None and batch_index is not None:
+            h3 = F.relu(self.gat3(torch.cat((z, batch_index), dim=-1)))
+            h4 = self.gat4(h3)
+
+            HI3 = self.layerI3(ZI)
+            HI4 = self.layerI4(HI3)
+            return h4, HI4
+        
+        if ZI is None and batch_index is not None:
+            h3 = F.relu(self.gat3(torch.cat((z, batch_index), dim=-1)))
+            h4 = self.gat4(h3)
+            return h4, None
+        
+        if ZI is None and batch_index is None:
+            h3 = F.relu(self.gat3(z))
+            h4 = self.gat4(h3)
+            return h4, None
     
-    def forward(self, x, edge_index):
-        mu, logvar = self.encode(x, edge_index)
-        z = self.reparametrize(mu, logvar)
-        return self.decode(z,edge_index), mu, logvar, z
+    def forward(self, x, X_I=None, batch_index=None):
+        if X_I is not None:
+            mu, logvar, mu_I, logvar_I = self.encode(x,X_I)
+            z = self.reparametrize(mu, logvar)
+            ZI = self.reparametrize(mu_I, logvar_I)
+        
+        if X_I is None:
+            mu, logvar,mu_I, logvar_I = self.encode(x, X_I)
+            z = self.reparametrize(mu, logvar)
+            ZI = None
+
+        h4, HI4 = self.decode(z,ZI, batch_index)
+
+        return h4, mu, logvar, z, HI4, mu_I, logvar_I, ZI
 
 class EfficientVNNLoss(nn.Module):
     def __init__(self, neighbor_size=20, length_scale=1.0, variance=1.0, jitter=1e-4):
@@ -2054,7 +2168,9 @@ class GP_VAE_all(nn.Module):
     '''
     All built using graph attention for variational inference
     '''
-    def __init__(self, in_channels, hidden_channels, out_channels, num_heads):
+    def __init__(self, in_channels, hidden_channels, out_channels, num_heads, 
+                 n_batch = 0,
+                 in_channels_image = 2048, var_activation: Optional[Callable] = None,):
         super(GP_VAE_all, self).__init__()
 
         # encode
@@ -2063,23 +2179,35 @@ class GP_VAE_all(nn.Module):
         self.gat2 = GATConv(hidden_channels * num_heads, hidden_channels, heads=num_heads, concat=True,
                             dropout = 0.1, add_self_loops= True, bias=False)
         
-        # or Direct GAT generation, similar to VGAE's GCN generation?
-        self.fc_mu = GATConv(hidden_channels * num_heads, out_channels, heads=num_heads, concat=True,
+        self.layerI1 = Layer1(n_in = in_channels_image, n_out = hidden_channels * num_heads, dropout_rate=0.1)
+        self.layerI2 = Layer1(n_in = hidden_channels * num_heads, n_out = hidden_channels, dropout_rate=0.0)
+
+        self.fc_mu = GATConv(hidden_channels * num_heads, out_channels, heads=1, concat=True,
                             dropout = 0.1, add_self_loops= True, bias=False)
-        self.fc_logvar = GATConv(hidden_channels * num_heads, out_channels, heads=num_heads, concat=True,
+        self.fc_logvar = GATConv(hidden_channels * num_heads, out_channels, heads=1, concat=True,
                             dropout = 0.1, add_self_loops= True, bias=False)
 
+        self.fc_mu_I = nn.Linear(hidden_channels * num_heads, out_channels)
+        self.fc_logvar_I = nn.Linear(hidden_channels * num_heads, out_channels)
+        
         #decode
-        self.gat3 = GATConv(out_channels, hidden_channels, heads=num_heads, concat=True,
+        self.gat3 = GATConv(out_channels+n_batch, hidden_channels, heads=num_heads, concat=True,
                             dropout = 0.1, add_self_loops= True, bias=False)  
-        self.gat4 = GATConv(hidden_channels * num_heads , in_channels, heads=num_heads, concat=True,
+        self.gat4 = GATConv(hidden_channels * num_heads , in_channels, heads=1, concat=True,
                             dropout = 0.1, add_self_loops= True, bias=False)
         
-    def encode(self, x, edge_index):
+        self.layerI3 = Layer3(n_in = out_channels, n_out = hidden_channels * num_heads, dropout_rate=0.1)
+        self.layerI4 = Layer4(n_in = hidden_channels * num_heads, n_out=in_channels_image)
+        
+    def encode(self, x, edge_index, X_I=None):
         x = F.relu(self.gat1(x, edge_index))
         x = self.gat2(x, edge_index)
-        return self.fc_mu(x,edge_index), self.fc_logvar(x,edge_index)
-    
+        if X_I is not None:
+            xI = self.layerI1(X_I)
+            xI = self.layerI2(xI)
+            return self.fc_mu(x,edge_index), self.fc_logvar(x,edge_index), self.fc_mu_I(xI), self.fc_logvar_I(xI)
+        else:
+            return self.fc_mu(x,edge_index), self.fc_logvar(x,edge_index), None, None
     
     def reparametrize(self, mu, logvar):
         logvar = torch.clamp(logvar, min=-10, max=10)
@@ -2090,21 +2218,48 @@ class GP_VAE_all(nn.Module):
             eps = torch.FloatTensor(std.size()).normal_()
         eps = Variable(eps)
         return eps.mul(std).add_(mu)
-    
-    # def reparametrize(self, mu, logvar):
-    #     std = logvar.mul(0.5).exp_()  
-    #     eps = torch.randn_like(std)   
-    #     return eps.mul(std).add_(mu)  
 
-    def decode(self, z, edge_index):
-        h3 = F.relu(self.gat3(z, edge_index))
-        h4 = self.gat4(h3,edge_index)
-        return h4
+    def decode(self, z, edge_index, ZI=None, batch_index=None):
+        if ZI is not None and batch_index is None:
+            h3 = F.relu(self.gat3(z, edge_index))
+            h4 = self.gat4(h3,edge_index)
+
+            HI3 = self.layerI3(ZI)
+            HI4 = self.layerI4(HI3)
+            return h4, HI4
+        
+        if ZI is not None and batch_index is not None:
+            h3 = F.relu(self.gat3(torch.cat((z, batch_index), dim=-1), edge_index))
+            h4 = self.gat4(h3,edge_index)
+
+            HI3 = self.layerI3(ZI)
+            HI4 = self.layerI4(HI3)
+            return h4, HI4
+        
+        if ZI is None and batch_index is not None:
+            h3 = F.relu(self.gat3(torch.cat((z, batch_index), dim=-1), edge_index))
+            h4 = self.gat4(h3,edge_index)
+            return h4, None
+        
+        if ZI is None and batch_index is None:
+            h3 = F.relu(self.gat3(z, edge_index))
+            h4 = self.gat4(h3,edge_index)
+            return h4, None
     
-    def forward(self, x, edge_index):
-        mu, logvar = self.encode(x, edge_index)
-        z = self.reparametrize(mu, logvar)
-        return self.decode(z,edge_index), mu, logvar, z
+    def forward(self, x, edge_index, X_I=None, batch_index=None):
+        if X_I is not None:
+            mu, logvar, mu_I, logvar_I = self.encode(x, edge_index, X_I)
+            z = self.reparametrize(mu, logvar)
+            ZI = self.reparametrize(mu_I, logvar_I)
+        
+        if X_I is None:
+            mu, logvar, mu_I, logvar_I = self.encode(x, edge_index, X_I)
+            z = self.reparametrize(mu, logvar)
+            ZI = None
+
+        h4, HI4 = self.decode(z, edge_index, ZI, batch_index)
+
+        return h4, mu, logvar, z, HI4, mu_I, logvar_I, ZI
 
 def train_stVGP(
         ST_need_reconstruction_matrix,
@@ -2128,6 +2283,7 @@ def train_stVGP(
         optimize_method = 'adam',
         whether_gradient_clipping = False,
         gradient_clipping = 5.0,
+        VAE_model_select = 'GAT_VAE',
         all_gat = False,
         ):
     '''
@@ -2169,39 +2325,29 @@ def train_stVGP(
             Whether to set parameters to prevent gradient explosion.
         gradient_clipping:
             Gradient explosion prevention parameters
+        VAE_model_select: 
+            Select which VAE model to use. Current options are 'GAT_VAE' and 'MLP_VAE'.
         all_gat:
             Whether or not all of them are built using the graph attention mechanism
     '''
     
-    if use_batch == False:
-        batch_methods = 'index'
-    if use_batch == True:
-        batch_methods = 'encoding'
-    
     if use_batch == True and batch_key == None:
         raise ValueError("batch_key cannot be None when use_batch is True")
+
+    if use_batch == True and adata_infor is None:
+        raise ValueError("adata_infor cannot be None when use_batch is True")
     
     if batch_key is not None and adata_infor is None:
         raise ValueError("adata_infor cannot be None when batch_key is set")
     
     if use_image == True and adata_infor_image is None:
         raise ValueError("adata_infor_image cannot be None when use_image is True")
-    
-    if batch_methods == 'encoding' and use_image == True:
-        raise ValueError("It is not recommended to remove the batch dimension while fusing image modalities. " \
-        "If you must incorporate this functionality, " \
-        "please refer to the GP_Batch_VAE and GP_image_cross_model_VAE models.")
 
     if GP_set == True and GP_spatial_infor is None:
         raise ValueError("GP_spatial_infor cannot be None when GP_set is True")
-    
-    if GP_set == True and use_batch == True:
-        raise ValueError("Gaussian processes require global spatial information. " \
-        "Please disable `use_batch` and `use_image` by setting them to False.")
 
-    if GP_set == True and use_image == True:
-        raise ValueError("Gaussian processes require global spatial information. " \
-        "Please disable `use_batch` and `use_image` by setting them to False.")
+    if VAE_model_select not in ['GAT_VAE', 'MLP_VAE']:
+        raise ValueError("VAE_model_select must be either 'GAT_VAE' or 'MLP_VAE'")
     
     seed = random_seed
     random.seed(seed)
@@ -2213,197 +2359,375 @@ def train_stVGP(
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
 
-    if batch_methods == 'index' and use_image == False:
-        hidden_dims = [ST_need_reconstruction_matrix.shape[1]] + hidden_embedding
-        X_tensor = torch.tensor(ST_need_reconstruction_matrix, dtype=torch.float32)
+    hidden_dims = [ST_need_reconstruction_matrix.shape[1]] + hidden_embedding
+
+    # Compatible with the GAT-VAE model
+    X_tensor = torch.tensor(ST_need_reconstruction_matrix, dtype=torch.float32)
+    if VAE_model_select == 'GAT_VAE':
         edge_list = []
         edge_list.append(all_spatial_net.row.tolist())
         edge_list.append(all_spatial_net.col.tolist())
         adj_tensor = torch.LongTensor(edge_list)
-
         data = Data(x=X_tensor,edge_index=adj_tensor)
         data = data.to(device)
+    in_channels, hidden_channels, out_channels = hidden_dims[0],hidden_dims[1],hidden_dims[2]
+    num_heads = 1
 
-        in_channels, hidden_channels, out_channels = hidden_dims[0],hidden_dims[1],hidden_dims[2]
-        num_heads = 1
+    # Compatible with MLP-VAE models
+    data_X = torch.Tensor(ST_need_reconstruction_matrix).to(device)
 
-        if all_gat :
+    if VAE_model_select == 'GAT_VAE':
+        # Image information
+        if use_image == True:
+            for image_index in range(len(adata_infor_image)):
+                if image_index == 0:
+                    X_I = extract_image_features(adata_infor_image[image_index])
+                else:
+                    X_I = np.vstack((X_I,extract_image_features(adata_infor_image[image_index])))
+            in_channels_image = X_I.shape[1]
+            data_I = torch.Tensor(X_I).to(device)
+        else:
+            in_channels_image = 2048
+            data_I = None
+
+        # Batch information
+        if use_batch == True:
+            n_obs = ST_need_reconstruction_matrix.shape[0]
+            batch_info = pd.Categorical(adata_infor.obs[batch_key])
+            n_batch = batch_info.categories.shape[0]
+            batch_index = batch_info.codes.copy()
+            batch_index = one_hot(torch.Tensor(batch_index).to(device), n_batch)
+        else:
+            n_batch = 0
+            batch_index = None
+
+        # Model selection
+        if all_gat:
             model = GP_VAE_all(in_channels = in_channels, hidden_channels = hidden_channels, 
-                        out_channels = out_channels, num_heads = num_heads).to(device)
+                        out_channels = out_channels, num_heads = num_heads, n_batch = n_batch,
+                        in_channels_image = in_channels_image).to(device)
+            
+            reconstruction_function = nn.MSELoss(reduction='sum')
+
+            # GP information
+            if GP_set:
+                vnn_loss = EfficientVNNLoss(neighbor_size=20, length_scale=1.5).to(device)
+                optimizer = torch.optim.Adam(list(model.parameters()) + list(vnn_loss.parameters()), lr=lr)
+                GP_spatial_infor = torch.tensor(GP_spatial_infor,dtype=torch.float32)
+                GP_spatial_infor = GP_spatial_infor.to(device)
+                model.train()
+                print('Model training')
+                for epoch in tqdm(range(training_epoch)):
+                    optimizer.zero_grad()
+                    recon_x, mu, logvar, z, recon_image, mu_I, logvar_I, ZI = model(data.x, data.edge_index, data_I, batch_index)
+                    mse_loss = F.mse_loss(recon_x, data.x)
+                    if recon_image is not None:
+                        mse_loss_image = F.mse_loss(recon_image, data_I)
+                        mse_loss = mse_loss + mse_loss_image
+                    batch_indices = torch.randperm(data.x.shape[0])[:256].to(device)
+                    if data_I is not None:
+                        batch_indices_image = torch.randperm(data_I.shape[0])[:256].to(device)
+                        kl_loss_image = vnn_loss(mu_I, logvar_I, GP_spatial_infor, batch_indices_image)
+                    else:
+                        kl_loss_image = 0
+                    kl_loss = vnn_loss(mu, logvar, GP_spatial_infor, batch_indices)
+                    beta = 1e-8
+                    if mu_I is not None:
+                        MMD_loss = compute_mmd_loss_minibatch(mu,mu_I,batch_size=32)
+                    else:
+                        MMD_loss = 0
+                    total_loss = mse_loss + beta * kl_loss + beta * kl_loss_image + 1e-5 * MMD_loss
+                    total_loss.backward()
+                    if whether_gradient_clipping:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
+                    optimizer.step()
+                model.eval()
+                model_params = model.state_dict()
+
+                with torch.no_grad():
+                    recon_x, embedding_mu, logvar, embedding_sample, recon_image, mu_I, logvar_I, ZI = model(data.x, data.edge_index, data_I, batch_index)
+                recon_x = recon_x.to('cpu').detach().numpy()
+                embedding = embedding_mu.to('cpu').detach().numpy()
+                logvar = logvar.to('cpu').detach().numpy()            
+                return recon_x,embedding,model_params,logvar
+            
+            else:
+                def loss_function(recon_x, x, mu, logvar):
+                    BCE = reconstruction_function(recon_x, x)  # mse loss
+                    # loss = 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+                    KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
+                    KLD = torch.sum(KLD_element).mul_(-0.5)
+                    # KL divergence
+                    return BCE + KLD
+                
+                if optimize_method.lower() == 'adam':
+                    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+                if optimize_method.lower() == 'rprop':
+                    optimizer = torch.optim.Rprop(model.parameters(), lr=lr)
+                print('Model training')
+
+                for epoch in tqdm(range(training_epoch)):
+                    model.train()
+                    optimizer.zero_grad()
+                    recon_x, mu, logvar, z, recon_image, mu_I, logvar_I, ZI = model(data.x, data.edge_index, data_I, batch_index)
+                    loss = loss_function(recon_x, data.x, mu, logvar)
+                    if recon_image is not None:
+                        loss_image = loss_function(recon_image, data_I, mu_I, logvar_I)
+                        loss = loss + loss_image
+                    if mu_I is not None:
+                        MMD_loss = compute_mmd_loss_minibatch(mu,mu_I,batch_size=32)
+                    else:
+                        MMD_loss = 0
+                    loss = loss + 1e-5 * MMD_loss
+                    loss.backward()
+                    if whether_gradient_clipping:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
+                    optimizer.step()
+                
+                model.eval()
+                model_params = model.state_dict()
+                if save_model:
+                    torch.save(model_params, save_model_path)
+                with torch.no_grad():
+                    recon_x, embedding_mu, logvar,embedding_sample, recon_image, mu_I, logvar_I, ZI = model(data.x, data.edge_index, data_I, batch_index)
+
+                recon_x = recon_x.to('cpu').detach().numpy()
+                embedding = embedding_mu.to('cpu').detach().numpy()
+                logvar = logvar.to('cpu').detach().numpy()
+
+                return recon_x,embedding,model_params,logvar
+
         else:
             model = GP_VAE(in_channels = in_channels, hidden_channels = hidden_channels, 
-                        out_channels = out_channels, num_heads = num_heads).to(device)
+                        out_channels = out_channels, num_heads = num_heads, n_batch = n_batch,
+                        in_channels_image = in_channels_image).to(device)
+            
+            reconstruction_function = nn.MSELoss(reduction='sum')
         
-        reconstruction_function = nn.MSELoss(reduction='sum')
+            # GP information
+            if GP_set:
+                vnn_loss = EfficientVNNLoss(neighbor_size=20, length_scale=1.5).to(device)
+                optimizer = torch.optim.Adam(list(model.parameters()) + list(vnn_loss.parameters()), lr=lr)
+                GP_spatial_infor = torch.tensor(GP_spatial_infor,dtype=torch.float32)
+                GP_spatial_infor = GP_spatial_infor.to(device)
+                model.train()
+                print('Model training')
+                for epoch in tqdm(range(training_epoch)):
+                    optimizer.zero_grad()
+                    recon_x, mu, logvar, z, recon_image, mu_I, logvar_I, ZI = model(data.x, data_I, batch_index)
+                    mse_loss = F.mse_loss(recon_x, data.x)
+                    if recon_image is not None:
+                        mse_loss_image = F.mse_loss(recon_image, data_I)
+                        mse_loss = mse_loss + mse_loss_image
+                    batch_indices = torch.randperm(data.x.shape[0])[:256].to(device)
+                    if data_I is not None:
+                        batch_indices_image = torch.randperm(data_I.shape[0])[:256].to(device)
+                        kl_loss_image = vnn_loss(mu_I, logvar_I, GP_spatial_infor, batch_indices_image)
+                    else:
+                        kl_loss_image = 0
+                    kl_loss = vnn_loss(mu, logvar, GP_spatial_infor, batch_indices)
+                    beta = 1e-8
+                    if mu_I is not None:
+                        MMD_loss = compute_mmd_loss_minibatch(mu,mu_I,batch_size=32)
+                    else:
+                        MMD_loss = 0
+                    total_loss = mse_loss + beta * kl_loss + beta * kl_loss_image + 1e-5 * MMD_loss
+                    total_loss.backward()
+                    if whether_gradient_clipping:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
+                    optimizer.step()
+                model.eval()
+                model_params = model.state_dict()
 
+                with torch.no_grad():
+                    recon_x, embedding_mu, logvar, embedding_sample, recon_image, mu_I, logvar_I, ZI = model(data.x, data_I, batch_index)
+                recon_x = recon_x.to('cpu').detach().numpy()
+                embedding = embedding_mu.to('cpu').detach().numpy()
+                logvar = logvar.to('cpu').detach().numpy()            
+                return recon_x,embedding,model_params,logvar
+            
+            else:
+                def loss_function(recon_x, x, mu, logvar):
+                    BCE = reconstruction_function(recon_x, x)  # mse loss
+                    # loss = 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+                    KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
+                    KLD = torch.sum(KLD_element).mul_(-0.5)
+                    # KL divergence
+                    return BCE + KLD
+                
+                if optimize_method.lower() == 'adam':
+                    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+                if optimize_method.lower() == 'rprop':
+                    optimizer = torch.optim.Rprop(model.parameters(), lr=lr)
+                print('Model training')
+
+                for epoch in tqdm(range(training_epoch)):
+                    model.train()
+                    optimizer.zero_grad()
+                    recon_x, mu, logvar, z, recon_image, mu_I, logvar_I, ZI = model(data.x, data_I, batch_index)
+                    loss = loss_function(recon_x, data.x, mu, logvar)
+                    if recon_image is not None:
+                        loss_image = loss_function(recon_image, data_I, mu_I, logvar_I)
+                        loss = loss + loss_image
+                    if mu_I is not None:
+                        MMD_loss = compute_mmd_loss_minibatch(mu,mu_I,batch_size=32)
+                    else:
+                        MMD_loss = 0
+                    loss = loss + 1e-5 * MMD_loss
+                    loss.backward()
+                    if whether_gradient_clipping:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
+                    optimizer.step()
+                
+                model.eval()
+                model_params = model.state_dict()
+                if save_model:
+                    torch.save(model_params, save_model_path)
+                with torch.no_grad():
+                    recon_x, embedding_mu, logvar,embedding_sample, recon_image, mu_I, logvar_I, ZI = model(data.x, data_I, batch_index)
+
+                recon_x = recon_x.to('cpu').detach().numpy()
+                embedding = embedding_mu.to('cpu').detach().numpy()
+                logvar = logvar.to('cpu').detach().numpy()
+
+                return recon_x,embedding,model_params,logvar
+
+
+    if VAE_model_select == 'MLP_VAE':
+        in_channels = ST_need_reconstruction_matrix.shape[1]
+        data_X = torch.Tensor(ST_need_reconstruction_matrix).to(device)
+        hidden_channels,out_channels = hidden_embedding[0],hidden_embedding[1]
+        n_obs = ST_need_reconstruction_matrix.shape[0]
+        # Batch information
+        if use_batch == True:
+            batch_info = pd.Categorical(adata_infor.obs[batch_key])
+            n_batch = batch_info.categories.shape[0]
+            batch_index = batch_info.codes.copy()
+            batch_index = one_hot(torch.Tensor(batch_index).to(device), n_batch)
+        else:
+            n_batch = 0
+            batch_index = None  
+        
+        # image information
+        if use_image == True:
+            for image_index in range(len(adata_infor_image)):
+                if image_index == 0:
+                    X_I = extract_image_features(adata_infor_image[image_index])
+                else:
+                    X_I = np.vstack((X_I,extract_image_features(adata_infor_image[image_index])))
+            in_channels_image = X_I.shape[1]
+            data_I = torch.Tensor(X_I).to(device)
+        else:
+            in_channels_image = 2048
+            data_I = None   
+        
+        vae = GP_Batch_VAE( in_channels = in_channels, 
+                            in_channels_image = in_channels_image,
+                            n_obs = n_obs,
+                            n_batch = n_batch,
+                            hidden_channels = hidden_channels, 
+                            out_channels = out_channels).to(device)
+        
         if GP_set:
             vnn_loss = EfficientVNNLoss(neighbor_size=20, length_scale=1.5).to(device)
-            optimizer = torch.optim.Adam(list(model.parameters()) + list(vnn_loss.parameters()), lr=lr)
+            optimizer = torch.optim.Adam(list(vae.parameters()) + list(vnn_loss.parameters()), lr=lr)
             GP_spatial_infor = torch.tensor(GP_spatial_infor,dtype=torch.float32)
             GP_spatial_infor = GP_spatial_infor.to(device)
-            model.train()
-            for epoch in tqdm(range(training_epoch)):
+            vae.train()
+            pbar = trange(training_epoch)
+            for epoch in pbar:
                 optimizer.zero_grad()
-                recon_x, mu, logvar, z = model(data.x, data.edge_index)
-                mse_loss = F.mse_loss(recon_x, data.x)
-                batch_indices = torch.randperm(data.x.shape[0])[:256].to(device)
-                kl_loss = vnn_loss(mu, logvar, GP_spatial_infor, batch_indices)
-                beta = 0.001 
-                total_loss = mse_loss + beta * kl_loss
-                total_loss.backward()
-                if whether_gradient_clipping:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
-                optimizer.step()
-            model.eval()
-            model_params = model.state_dict()
-            with torch.no_grad():
-                recon_x, embedding_mu, logvar, embedding_sample = model(data.x, data.edge_index)
-            recon_x = recon_x.to('cpu').detach().numpy()
-            embedding = embedding_mu.to('cpu').detach().numpy()
-            logvar = logvar.to('cpu').detach().numpy()            
-            return recon_x,embedding,model_params,logvar
-            
-        else:
-            def loss_function(recon_x, x, mu, logvar):
-                BCE = reconstruction_function(recon_x, x)  # mse loss
-                # loss = 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-                KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
-                KLD = torch.sum(KLD_element).mul_(-0.5)
-                # KL divergence
-                return BCE + KLD
-            
-            if optimize_method.lower() == 'adam':
-                optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-            if optimize_method.lower() == 'rprop':
-                optimizer = torch.optim.Rprop(model.parameters(), lr=lr)
-            
-            print('Model training')
+                inference_outputs = vae.inference(data_X)
+                if data_I is not None:
+                    inference_outputsI = vae.inferenceI(data_I)
+                else:
+                    inference_outputsI = None
 
-            for epoch in tqdm(range(training_epoch)):
-                model.train()
-                optimizer.zero_grad()
-                recon_x, mu, logvar, z = model(data.x, data.edge_index)
-                loss = loss_function(recon_x, data.x, mu, logvar)
+                z = inference_outputs['z'] 
+                zI = inference_outputsI['z'] if inference_outputsI is not None else None
+
+                generative_outputs = vae.generative(inference_outputs['z'], batch_index, zI)
+                loss = vae.loss(x = data_X, xI = data_I, inference_outputs = inference_outputs, 
+                                inference_outputsI = inference_outputsI, 
+                                generative_outputs = generative_outputs,
+                                Z_weight = epoch/training_epoch,
+                                weight_mmd = 1e-5)
+                
+                batch_indices = torch.randperm(data_X.shape[0])[:256].to(device)
+                beta = 1e-8
+                loss = loss + beta * vnn_loss(inference_outputs['qz'].loc, inference_outputs['qz'].scale.log(), GP_spatial_infor, batch_indices)
+                if data_I is not None:
+                    batch_indices_image = torch.randperm(data_I.shape[0])[:256].to(device)
+                    loss = loss + beta * vnn_loss(inference_outputsI['qz'].loc, inference_outputsI['qz'].scale.log(), GP_spatial_infor, batch_indices_image)
+                # pbar.set_postfix_str(f'loss: {loss.item():.3e}')
                 loss.backward()
-                if whether_gradient_clipping:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
                 optimizer.step()
-            
-            model.eval()
-            model_params = model.state_dict()
-
-            if save_model:
-                torch.save(model_params, save_model_path)
-
+            vae.eval()
             with torch.no_grad():
-                recon_x, embedding_mu, logvar,embedding_sample = model(data.x, data.edge_index)
+                inference_outputs = vae.inference(data_X)
+                if data_I is not None:
+                    inference_outputsI = vae.inferenceI(data_I)
+                else:
+                    inference_outputsI = None
 
-            recon_x = recon_x.to('cpu').detach().numpy()
-            embedding = embedding_mu.to('cpu').detach().numpy()
-            logvar = logvar.to('cpu').detach().numpy()
+                z = inference_outputs['z'] 
+                zI = inference_outputsI['z'] if inference_outputsI is not None else None
+                generative_outputs = vae.generative(z, batch_index, zI)
+                qz = inference_outputs['qz'].loc
+                qzI = inference_outputsI['qz'].loc if inference_outputsI is not None else None
+                x4 = generative_outputs['x4'].detach().cpu().numpy()
             
-            return recon_x,embedding,model_params,logvar
-    
-    if use_batch == False and use_image == True:
+            recon_x = x4
+            embedding = qz.detach().cpu().numpy()
+            model_params = vae.state_dict()    
 
-        in_channels = ST_need_reconstruction_matrix.shape[1]
-        data_X = torch.Tensor(ST_need_reconstruction_matrix).to(device)
-        hidden_channels,out_channels = hidden_embedding[0],hidden_embedding[1]
+            return recon_x, embedding, model_params, inference_outputs, inference_outputsI, generative_outputs
 
-        for image_index in range(adata_infor_image):
-            if image_index == 0:
-                X_I = extract_image_features(adata_infor_image[image_index])
-            else:
-                X_I = np.vstack((X_I,extract_image_features(adata_infor_image[image_index])))
-        
-        in_channels_image = X_I.shape[1]
-        data_I = torch.Tensor(X_I).to(device)
+        else:
+            vae.train(mode=True)
+            params = filter(lambda p: p.requires_grad, vae.parameters())
+            optimizer = torch.optim.Adam(params, lr=lr, eps=0.01, weight_decay=weight_decay)
+            print('Model training')
+            pbar = trange(training_epoch)
+            for epoch in pbar:
+                optimizer.zero_grad()
+                inference_outputs = vae.inference(data_X)
+                if data_I is not None:
+                    inference_outputsI = vae.inferenceI(data_I)
+                else:
+                    inference_outputsI = None
 
-        vae = GP_image_cross_model_VAE(in_channels = in_channels, in_channels_image = in_channels_image,
-                                    hidden_channels = hidden_channels, out_channels = out_channels)
-    
-        vae.train(mode=True)
-        params = filter(lambda p: p.requires_grad, vae.parameters())
-        optimizer = torch.optim.Adam(params, lr=1e-3, eps=0.01, weight_decay=1e-6)
-        pbar = trange(training_epoch)
-        for epoch in pbar:
-            optimizer.zero_grad()
-            inference_outputs = vae.inference(data_X)
-            inference_outputsI = vae.inferenceI(data_I)
-            z = inference_outputs['z'] 
-            zI = inference_outputsI['z']
-            generative_outputs = vae.generative(z, zI)
-            loss = vae.loss(data_X, data_I, inference_outputs, 
-                            inference_outputsI, generative_outputs,
-                            weight_mmd = 0.001)
-            pbar.set_postfix_str(f'loss: {loss.item():.3e}')
-            loss.backward()
-            optimizer.step()
+                z = inference_outputs['z'] 
+                zI = inference_outputsI['z'] if inference_outputsI is not None else None
 
-        vae.eval()
-        with torch.no_grad():
-            inference_outputs = vae.inference(data_X)
-            inference_outputsI = vae.inferenceI(data_I)
-            z = inference_outputs['z'] 
-            zI = inference_outputsI['z']
-            generative_outputs = vae.generative(z, zI)
-            qz = inference_outputs['qz'].loc
-            qzI = inference_outputsI['qz'].loc
-
-            x4 = generative_outputs['x4'].detach().cpu().numpy()
-
-        recon_x = x4
-        embedding = qz
-        model_params = vae.state_dict()
-
-        return recon_x, embedding, model_params, inference_outputs, inference_outputsI, generative_outputs
-
-    if batch_methods == 'encoding' and use_image == False:
-
-        in_channels = ST_need_reconstruction_matrix.shape[1]
-        n_obs = ST_need_reconstruction_matrix.shape[0]
-        batch_info = pd.Categorical(adata_infor.obs[batch_key])
-        n_batch = batch_info.categories.shape[0]
-        batch_index = batch_info.codes.copy()
-        batch_index = one_hot(torch.Tensor(batch_index).to(device), n_batch)
-        data_X = torch.Tensor(ST_need_reconstruction_matrix).to(device)
-        hidden_channels,out_channels = hidden_embedding[0],hidden_embedding[1]
-        vae = GP_Batch_VAE(in_channels=in_channels,
-                           n_obs=n_obs,
-                           n_batch=n_batch,
-                           hidden_channels = hidden_channels, 
-                           out_channels = out_channels,
-                           dropout_rate = 0.1).to(device)
-        vae.train(mode=True)
-        params = filter(lambda p: p.requires_grad, vae.parameters())
-        optimizer = torch.optim.Adam(params, lr=lr, eps=0.01, weight_decay=weight_decay)
-
-        pbar = trange(training_epoch)
-        for epoch in pbar:
-            optimizer.zero_grad()
-
-            inference_outputs = vae.inference(data_X)
-            generative_outputs = vae.generative(inference_outputs['z'], batch_index)
-
-            loss = vae.loss(data_X, inference_outputs, generative_outputs, epoch/training_epoch)
-
-            pbar.set_postfix_str(f'loss: {loss.item():.3e}')
-
-            loss.backward()
-            optimizer.step()
+                generative_outputs = vae.generative(inference_outputs['z'], batch_index, zI)
+                loss = vae.loss(x = data_X, xI = data_I, inference_outputs = inference_outputs, 
+                                inference_outputsI = inference_outputsI, 
+                                generative_outputs = generative_outputs,
+                                Z_weight = epoch/training_epoch,
+                                weight_mmd = 1e-5)
+                pbar.set_postfix_str(f'loss: {loss.item():.3e}')
+                loss.backward()
+                optimizer.step()
+            vae.eval()
+            with torch.no_grad():
+                inference_outputs = vae.inference(data_X)
+                if data_I is not None:
+                    inference_outputsI = vae.inferenceI(data_I)
+                else:
+                    inference_outputsI = None
+                z = inference_outputs['z'] 
+                zI = inference_outputsI['z'] if inference_outputsI is not None else None
+                generative_outputs = vae.generative(z, batch_index, zI)
+                qz = inference_outputs['qz'].loc
+                qzI = inference_outputsI['qz'].loc if inference_outputsI is not None else None
+                x4 = generative_outputs['x4'].detach().cpu().numpy()
             
-        vae.eval()
-        with torch.no_grad():
-            inference_outputs = vae.inference(data_X)
-            generative_outputs = vae.generative(inference_outputs['z'], batch_index)
-            qz = inference_outputs['qz'].loc.detach().cpu().numpy()
-            x4 = generative_outputs['x4'].detach().cpu().numpy()
-            Z = vae.layerZ.getZ()
+            recon_x = x4
+            embedding = qz.detach().cpu().numpy()
+            model_params = vae.state_dict()
 
-        recon_x = x4
-        embedding = qz
-        model_params = vae.state_dict()
-        return recon_x, embedding, model_params, inference_outputs, generative_outputs
+            return recon_x, embedding, model_params, inference_outputs, inference_outputsI, generative_outputs
 
 def get_3D_prediction(train_coordinates:NDArray,            # aligned coordinate
                       embedding:NDArray,                    # embedded layer representation
@@ -2435,90 +2759,129 @@ def gene_prediction(
         prediction_embedding,               # Embedded expression after prediction
         adj_matrix,                         # Neighborhood information for spatial transcriptomes
         checkpoint,                         # Model parameters for stVGP(after training)
-        model_layer,                        # Model parameters for each layer
-        all_gat,                            # Whether all GAT structures are used
-        logvar,                             # The variance information generated during training, if lost, can be regenerated using the original data
+        model_layer,                        # Model parameters for each layer                         # Whether all GAT structures are used
         device,                             # If gpu is available, use gpu acceleration, if not, choose cpu,please be as consistent as possible with the training
+        batch_key = None,
+        adata_infor = None,
+        X_I = None,
+        VAE_model_select = 'GAT_VAE',
+        all_gat = True,
 ):
-    in_channels, hidden_channels, out_channels,num_heads = model_layer[0],model_layer[1],model_layer[2],model_layer[3]  
+    if VAE_model_select == 'GAT_VAE':
+
+        in_channels, hidden_channels, out_channels,num_heads = model_layer[0],model_layer[1],model_layer[2],model_layer[3]  
+        
+        slice_matrix = slice_matrix.to(device)
+        adj_matrix = adj_matrix.to(device)
+        if X_I is not None:
+            in_channels_image = X_I.shape[1]
+        else:
+            in_channels_image = 2048
+
+        if batch_key is not None:
+            if adata_infor is not None:
+                n_obs = slice_matrix.shape[0]
+                batch_info = pd.Categorical(adata_infor.obs[batch_key])
+                n_batch = batch_info.categories.shape[0]
+                batch_index = batch_info.codes.copy()
+                batch_index = one_hot(torch.Tensor(batch_index).to(device), n_batch)
+            else:
+                print("Please set adata_infor")
+        else:
+            n_batch = 0
+            batch_index = None
+
+        if all_gat:
+            model = GP_VAE_all(in_channels = in_channels, hidden_channels = hidden_channels, 
+                        out_channels = out_channels, num_heads = num_heads,n_batch = n_batch,
+                        in_channels_image = in_channels_image).to(device)
+            model.load_state_dict(checkpoint)
+
+            # logvar needs to be generated when not provided
+            mu, logvar, mu_I, logvar_I = model.encode(slice_matrix,adj_matrix,X_I=X_I)
+        
+            data_pred = Data(x=prediction_embedding,edge_index=adj_matrix)
+            data_pred = data_pred.to(device)
+
+            with torch.no_grad():
+                z = model.reparametrize(data_pred.x,logvar)
+                if mu_I is not None:
+                    ZI = model.reparametrize(mu_I, logvar_I)
+                else:
+                    ZI = None
+                recon_gene,recon_I = model.decode(z,data_pred.edge_index,ZI=ZI,batch_index=batch_index)
+            recon_gene = recon_gene.to('cpu').detach().numpy()
+
+            return recon_gene
+
+        else:
+            model = GP_VAE(in_channels = in_channels, hidden_channels = hidden_channels, 
+                out_channels = out_channels, num_heads = num_heads, n_batch = n_batch,
+                in_channels_image = in_channels_image).to(device)
+            
+            model.load_state_dict(checkpoint)
+
+            # logvar needs to be generated when not provided
+            mu, logvar, mu_I, logvar_I = model.encode(x=slice_matrix,X_I=X_I)
+        
+            data_pred = Data(x=prediction_embedding,edge_index=adj_matrix)
+            data_pred = data_pred.to(device)
+
+            with torch.no_grad():
+                z = model.reparametrize(data_pred.x,logvar)
+                if mu_I is not None:
+                    ZI = model.reparametrize(mu_I, logvar_I)
+                else:
+                    ZI = None
+                recon_gene,recon_I = model.decode(z=z,ZI=ZI,batch_index=batch_index)
+            recon_gene = recon_gene.to('cpu').detach().numpy()
+
+            return recon_gene
     
-    slice_matrix = slice_matrix.to(device)
-    adj_matrix = adj_matrix.to(device)
+    if VAE_model_select == 'MLP_VAE':
+        in_channels_image = X_I.shape[1]
+        in_channels, hidden_channels, out_channels,num_heads = model_layer[0],model_layer[1],model_layer[2],model_layer[3]  
+        data_X = torch.Tensor(slice_matrix).to(device)
+        n_obs = slice_matrix.shape[0]
 
-    if all_gat:
-        if logvar == None:
-
-            model = GP_VAE_all(in_channels = in_channels, hidden_channels = hidden_channels, 
-                        out_channels = out_channels, num_heads = num_heads).to(device)
-            model.load_state_dict(checkpoint)
-
-            # logvar needs to be generated when not provided
-            mu, logvar = model.encode(slice_matrix,adj_matrix)
-        
-            data_pred = Data(x=prediction_embedding,edge_index=adj_matrix)
-            data_pred = data_pred.to(device)
-
-            with torch.no_grad():
-                z = model.reparametrize(data_pred.x,logvar)
-                recon_gene = model.decode(z,data_pred.edge_index)
-            recon_gene = recon_gene.to('cpu').detach().numpy()
-
-            return recon_gene
-        
+        if batch_key is not None:
+            if adata_infor is not None:
+                n_obs = slice_matrix.shape[0]
+                batch_info = pd.Categorical(adata_infor.obs[batch_key])
+                n_batch = batch_info.categories.shape[0]
+                batch_index = batch_info.codes.copy()
+                batch_index = one_hot(torch.Tensor(batch_index).to(device), n_batch)
+            else:
+                raise ValueError("adata_infor cannot be None when batch_key is set")
         else:
-            model = GP_VAE_all(in_channels = in_channels, hidden_channels = hidden_channels, 
-                        out_channels = out_channels, num_heads = num_heads).to(device)
-            
-            model.load_state_dict(checkpoint)
-     
-            data_pred = Data(x=prediction_embedding,edge_index=adj_matrix)
-            data_pred = data_pred.to(device)
+            n_batch = 0
+            batch_index = None
+        vae = GP_Batch_VAE( in_channels = in_channels, 
+                            in_channels_image = in_channels_image,
+                            n_obs = n_obs,
+                            n_batch = n_batch,
+                            hidden_channels = hidden_channels, 
+                            out_channels = out_channels).to(device)
 
-            logvar = torch.tensor(dtype=torch.float32)
-            logvar = logvar.to(device)
+        vae.load_state_dict(checkpoint)
 
-            with torch.no_grad():
-                z = model.reparametrize(data_pred.x,logvar)
-                recon_gene = model.decode(z,data_pred.edge_index)
-            recon_gene = recon_gene.to('cpu').detach().numpy()
+        data_I = X_I
 
-            return recon_gene
+        with torch.no_grad():
+            inference_outputs = vae.inference(data_X)
+            if data_I is not None:
+                inference_outputsI = vae.inferenceI(data_I)
+            else:
+                inference_outputsI = None
 
-    else:
-        if logvar == None:
-            model = GP_VAE(in_channels = in_channels, hidden_channels = hidden_channels, 
-                        out_channels = out_channels, num_heads = num_heads).to(device)
+            z = inference_outputs['z'] 
+            zI = inference_outputsI['z'] if inference_outputsI is not None else None
+            generative_outputs = vae.generative(z, batch_index, zI)
+            qz = inference_outputs['qz'].loc
+            qzI = inference_outputsI['qz'].loc if inference_outputsI is not None else None
+            x4 = generative_outputs['x4'].detach().cpu().numpy()
 
-            model.load_state_dict(checkpoint)
+            recon_gene = x4
 
-            data_pred = Data(x=prediction_embedding,edge_index=adj_matrix)
-            data_pred = data_pred.to(device)
+        return recon_gene
 
-            # logvar needs to be generated when not provided
-            mu, logvar = model.encode(slice_matrix,adj_matrix)
-
-            with torch.no_grad():
-                z = model.reparametrize(data_pred.x,logvar)
-                recon_gene = model.decode(z,data_pred.edge_index)
-            recon_gene = recon_gene.to('cpu').detach().numpy()
-
-            return recon_gene
-        
-        else:
-            model = GP_VAE(in_channels = in_channels, hidden_channels = hidden_channels, 
-                        out_channels = out_channels, num_heads = num_heads).to(device)
-
-            model.load_state_dict(checkpoint)
-
-            logvar = torch.tensor(dtype=torch.float32)
-            logvar = logvar.to(device)
-
-            data_pred = Data(x=prediction_embedding,edge_index=adj_matrix)
-            data_pred = data_pred.to(device)
-            
-            with torch.no_grad():
-                z = model.reparametrize(data_pred.x,logvar)
-                recon_gene = model.decode(z,data_pred.edge_index)
-            recon_gene = recon_gene.to('cpu').detach().numpy()
-
-            return recon_gene

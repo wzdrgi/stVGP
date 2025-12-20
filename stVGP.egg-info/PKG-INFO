@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: stVGP
-Version: 0.0.4
+Version: 0.0.6
 Summary: A variational spatiotemporal Gaussian process framework designed to integrate multi-modal, multi-slice spatial transcriptomics (ST) data for coherent 3D tissue reconstruction
 Home-page: https://github.com/wzdrgi/stVGP
 Author: Zedong Wang

@@ -497,6 +497,7 @@ Can refer to requires.txt and R_requires.txt for environment configuration. We c
     Parameter "optimize_method": The optimizer selected by "optimize_method", defaulting to Adam.
     Parameter "whether_gradient_clipping": Enable gradient clipping. If set to Yes, configure "gradient_clipping".
     Parameter "gradient_clipping": Gradient clipping value, default is 5.0.
+    Parameter "VAE_model_select": Choice of VAE architecture, either 'GAT_VAE' (for graph-based spatial modeling) or 'MLP_VAE' (for standard VAE modeling).
     Parameter "all_gat": all_gat, whether to replace the model's linear layer with GATConv.  
 ```
 5. Gene prediction:The functions “get_3D_prediction” and “gene_prediction” predict the latent layer information and final gene expression of virtual slices, respectively. get_3D_prediction requires input of trained latent layer information and virtual spatial coordinates, while gene_prediction requires input of predicted latent layer information and initial slice expression information. They return the latent layer and gene expression of virtual slices, respectively.  
@@ -516,7 +517,10 @@ Can refer to requires.txt and R_requires.txt for environment configuration. We c
     Parameter "adj_matrix": The spatial adjacency matrix (neighborhood graph) representing connections between spots.
     Parameter "checkpoint": The dictionary containing trained model parameters (state_dict) of the stVGP model.
     Parameter "model_layer": A list of model architectural hyperparameters: [in_channels, hidden_channels, out_channels, num_heads].
-    Parameter "all_gat": Boolean flag indicating whether to use the full GAT architecture (GP_VAE_all) or standard architecture (GP_VAE).
-    Parameter "logvar": The variance tensor from the VAE training. If None, it will be re-inferred from the input data.
     Parameter "device": Computation device (e.g., 'cuda' or 'cpu'). Must be consistent with the device used during training.
+    Parameter "batch_key": The key (column name) in adata_infor.obs that identifies batch information for batch effect correction.
+    Parameter "adata_infor": The AnnData object providing metadata and batch information, required when batch_key is specified.
+    Parameter "X_I": Optional image feature matrix (e.g., extracted from H&E images) for multi-modal spatial transcriptomics integration.
+    Parameter "VAE_model_select": Choice of VAE architecture, either 'GAT_VAE' (for graph-based spatial modeling) or 'MLP_VAE' (for standard VAE modeling).
+    Parameter "all_gat": Boolean flag indicating whether to use the full GAT structure (GP_VAE_all) or the standard architecture (GP_VAE).
 ```

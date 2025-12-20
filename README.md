@@ -122,6 +122,7 @@ Domain and batch effect
 ```python
 # Domain and batch effect
 # Re-enter data
+import anndata as ad
 data_path = 'C:/Users/wzd/Desktop/setting/project/DLPFC/'
 slice_idx = [151673, 151674, 151675, 151676]
 adata_DLPFC_list = []
@@ -130,6 +131,8 @@ for slice_name in slice_idx:
     adata = sc.read(file_path)
     adata = adata[~adata.obs['layer'].isna()]
     adata_DLPFC_list.append(adata)
+# adata_infor_image = ad.concat(adata_DLPFC_list)
+# If image information is required, please run and save it here.
 ```
 Processing relationships
 ```python
@@ -140,6 +143,9 @@ slice_matrix,adj_matrix = stvg.adata_preprocess_adjnet(input_adata = adata_DLPFC
 Run stVGP
 ```python
 # Model training
+# Please note that train_stVGP has two modes controlled by the parameter VAE_model_select: GAT_VAE and MLP_VAE.
+# The number of variables returned by these two training modes differs. Please be mindful of this when using them.
+# Here, we conducted separate demonstrations.
 recon_x, embedding, model_params,logvar = stvg.train_stVGP(
         ST_need_reconstruction_matrix = slice_matrix,
         all_spatial_net = adj_matrix,
@@ -271,6 +277,16 @@ model_checkpoint = model_param
 Complete gene expression prediction
 ```python
 # Complete gene expression prediction
+# Please note that the gene prediction process must be coordinated with your training process. Parameters must be consistent with the `train_stVGP` function.
+# If you require cross-modal training and prediction, please manually extract the image data here.
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# for image_index in range(len(adata_infor_image)):
+#                 if image_index == 0:
+#                     X_I = stvg.extract_image_features(adata_infor_image[image_index])
+#                 else:
+#                     X_I = np.vstack((X_I,stvg.extract_image_features(adata_infor_image[image_index])))
+#             in_channels_image = X_I.shape[1]
+#             data_I = torch.Tensor(X_I).to(device)
 Prediction_gene_expression = stvg.gene_prediction(
     slice_matrix = slice_matrix,
     prediction_embedding = prediction_embedding,           
@@ -351,6 +367,9 @@ use_batch = True
 Run stVGP
 ```python
 # Please note that the output of stVGP may vary slightly depending on the specific image and batch settings selected.
+# Please note that train_stVGP has two modes controlled by the parameter VAE_model_select: GAT_VAE and MLP_VAE.
+# The number of variables returned by these two training modes differs. Please be mindful of this when using them.
+# Here, we conducted separate demonstrations.
 recon_x, embedding, model_params, inference_outputs, inference_outputsI, generative_outputs = stvg.train_stVGP(
                                             ST_need_reconstruction_matrix = ST_need_reconstruction_matrix,
                                             all_spatial_net = all_spatial_net,

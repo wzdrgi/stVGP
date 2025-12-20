@@ -251,7 +251,6 @@ prediction_embedding_151673 = np.loadtxt('C:/Users/wzd/Desktop/setting/project/D
 prediction_embedding_151674 = np.loadtxt('C:/Users/wzd/Desktop/setting/project/DLPFC/151674_prediction.txt')
 prediction_embedding_151675 = np.loadtxt('C:/Users/wzd/Desktop/setting/project/DLPFC/151675_prediction.txt')
 prediction_embedding_151676 = np.loadtxt('C:/Users/wzd/Desktop/setting/project/DLPFC/151676_prediction.txt')
-model_checkpoint = torch.load("C:/Users/wzd/Desktop/setting/project/DLPFC/model.pth")
 
 prediction_embedding = np.vstack((prediction_embedding_151673,prediction_embedding_151674,prediction_embedding_151675,prediction_embedding_151676))
 prediction_embedding = torch.tensor(prediction_embedding,dtype=torch.float32)
@@ -266,6 +265,9 @@ edge_list.append(adj_matrix.row.tolist())
 edge_list.append(adj_matrix.col.tolist())
 adj_tensor = torch.LongTensor(edge_list)
 ```
+```python
+model_checkpoint = model_param
+```
 Complete gene expression prediction
 ```python
 # Complete gene expression prediction
@@ -275,13 +277,11 @@ Prediction_gene_expression = stvg.gene_prediction(
     adj_matrix = adj_tensor,                        
     checkpoint = model_checkpoint,                         
     model_layer = [slice_matrix.shape[1],512,24,1],                        
-    all_gat = True,                            
-    logvar = None,                             
+    all_gat = True,                                                       
     device = torch.device('cuda:0')                           
 )
 ```
 Done!
-
 
 Human heart dataset
 ```python
@@ -351,7 +351,7 @@ use_batch = True
 Run stVGP
 ```python
 # Please note that the output of stVGP may vary slightly depending on the specific image and batch settings selected.
-recon_x, embedding, model_params, inference_outputs, generative_outputs = stvg.train_stVGP(
+recon_x, embedding, model_params, inference_outputs, inference_outputsI, generative_outputs = stvg.train_stVGP(
                                             ST_need_reconstruction_matrix = ST_need_reconstruction_matrix,
                                             all_spatial_net = all_spatial_net,
                                             use_batch = use_batch,
@@ -373,6 +373,7 @@ recon_x, embedding, model_params, inference_outputs, generative_outputs = stvg.t
                                             optimize_method = 'adam',
                                             whether_gradient_clipping = False,
                                             gradient_clipping = 5.0,
+                                            VAE_model_select = 'MLP_VAE',
                                             all_gat = False,
                                             )
 ```
